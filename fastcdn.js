@@ -197,7 +197,7 @@
     function Component(object) {
         var self = this;
         var scroll = new Lampa.Scroll({ mask: true, over: true });
-        var files = new Lampa.Explorer(object);
+        var files = new Lampa.Files(object);
         var filter = new Lampa.Filter(object);
         var last;
         var data = {};       // sourceId -> { isSerial, tracks }
@@ -310,7 +310,7 @@
                 item.on('hover:focus', function (e) { last = e.target; scroll.update($(e.target), true); });
                 _this.append(item);
             });
-            scroll.update();
+
         };
 
         this.append = function (item) { scroll.append(item); };
@@ -319,6 +319,7 @@
             var q = qualities[choice.quality] || t.qualities[0] || 'Auto';
             Lampa.Noty.show('FastCDN: получение потока...');
             var done = function (url) {
+                log('play url', url);
                 Lampa.Player.play({ title: t.title, url: url });
                 Lampa.Player.playlist([{ title: t.title, url: url }]);
             };
@@ -332,7 +333,7 @@
             scroll.body().find('.online').remove();
             var box = $('<div class="online selector"><div class="online__body"><div class="online__title">' + text + '</div></div></div>');
             scroll.append(box);
-            scroll.update();
+
         };
         this.reset = function () {};
         this.saveChoice = function () {};
