@@ -23,12 +23,12 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
- * @version 0.7.2
+ * @version 0.7.3
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.7.2';
+    var VERSION = '0.7.3';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -96,9 +96,13 @@
         });
     }
 
+    function isVkUrl(url) {
+        return /vkuser\.net|vk\.com|vkvideo|okcdn|mycdn\.me|vk-cdn/i.test(url || '');
+    }
+
     /* ================================================================== *
      * Sources. Each fetch(ids, ok, err) returns { isSerial, tracks: [...] }
-     * track = { voice, season, episode, title, qualities:[..], url?, resolve?(q,cb,err) }
+     * track = { voice, season, episode, title, qualities:[..], url?, headers?, no_prepare?, resolve?(q,cb,err) }
      * ================================================================== */
 
     var CDNVideoHub = {
@@ -113,12 +117,13 @@
                 if (!json || !json.items || !json.items.length) { err('empty'); return; }
                 var tracks = json.items.map(function (d) {
                     var voice = d.voiceStudio || d.voiceType || '';
-                    return {
+return {
                         voice: voice,
                         season: d.season != null ? d.season : null,
                         episode: d.episode != null ? d.episode : null,
                         title: d.season != null ? 'S' + d.season + 'E' + d.episode + (voice ? ' · ' + voice : '') : voice,
                         qualities: ['1080p', '720p', '480p', 'Auto'],
+                        noPrepare: true, // VK CDN rejects server-side downloads
                         resolve: function (q, cb, e2) {
                             getJSON(self.base + 'video/' + d.vkId, function (r) {
                                 var s = r && r.sources;
@@ -371,7 +376,7 @@ serialTracks: function (pl) {
                     info: ' / ' + byId[balanser].title
                 });
                 item.on('hover:enter', function () {
-                    if (!relayBase()) { _this.play(t, qualities); return; }
+                    if (!relayBase() || t.noPrepare) { _this.play(t, qualities); return; }
                     Lampa.Select.show({
                         title: 'FastCDN',
                         items: [
@@ -409,12 +414,16 @@ serialTracks: function (pl) {
 
         this.prepare = function (t, qualities) {
             var base = relayBase();
-            if (!base) { this.play(t, qualities); return; }
+            if (!base || t.noPrepare) { this.play(t, qualities); return; }
             var q = qualities[choice.quality] || t.qualities[0] || 'Auto';
             var name = (t.title || 'video').replace(/[^\w\-. ]+/g, '_').slice(0, 100);
             var profile = Lampa.Storage.get('fastcdn_prepare_profile', 'copy') + '';
             Lampa.Noty.show('FastCDN: подготовка на сервере...');
             var start = function (url) {
+                if (isVkUrl(url)) {
+                    Lampa.Noty.show('FastCDN: VK-поток нельзя скачать — смотрите через релей');
+                    return;
+                }
                 var h = t.headers ? b64url(JSON.stringify(t.headers)) : '';
                 var path = base + '/dl?u=' + b64url(url) + '&h=' + h +
                     '&profile=' + encodeURIComponent(profile) + '&name=' + encodeURIComponent(name);
