@@ -50,3 +50,8 @@ Lampa.Storage.set('fastcdn_prepare_profile', 'copy'); // or 'h264'
 The relay strips SCTE-35 ad breaks (`EXT-X-CUE-OUT` .. `EXT-X-CUE-IN`) from HLS
 media playlists by default (`HLS_STRIP_CUE_ADS=1`) and can drop ad-host
 segments via the `HLS_BLOCK` regex.
+
+## MPV bridge
+After a prepared file is ready the plugin offers **"Открыть в MPV (bridge)"** — it opens the
+`mpv://` scheme handled by `~/.local/bin/mpv-bridge` (desktop handler), or **"Смотреть здесь"**
+to play in the browser. Disable the prompt with `Lampa.Storage.set('fastcdn_mpv', false)`.

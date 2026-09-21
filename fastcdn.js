@@ -23,12 +23,12 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
- * @version 0.7.3
+ * @version 0.8.0
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.7.3';
+    var VERSION = '0.8.0';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -436,8 +436,36 @@ serialTracks: function (pl) {
                         relayFetch(base + '/dl/' + job.id).then(function (s) {
                             if (s && s.status === 'done' && s.file) {
                                 Lampa.Noty.show('FastCDN: готово');
-                                Lampa.Player.play({ title: t.title, url: s.file });
-                                Lampa.Player.playlist([{ title: t.title, url: s.file }]);
+                                var abs = /^https?:/i.test(s.file) ? s.file : (location.origin + s.file);
+                                var toMpv = function () {
+                                    var a = document.createElement('a');
+                                    a.href = 'mpv://' + encodeURIComponent(abs + '?title=' + (t.title || ''));
+                                    a.target = '_top';
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    a.remove();
+                                };
+                                if (Lampa.Storage.get('fastcdn_mpv', true) !== false) {
+                                    Lampa.Select.show({
+                                        title: 'FastCDN: воспроизведение',
+                                        items: [
+                                            { title: '▶ Открыть в MPV (bridge)' },
+                                            { title: 'Смотреть здесь' }
+                                        ],
+                                        onSelect: function (a) {
+                                            Lampa.Controller.toggle('content');
+                                            if (/MPV/i.test(a.title)) toMpv();
+                                            else {
+                                                Lampa.Player.play({ title: t.title, url: abs });
+                                                Lampa.Player.playlist([{ title: t.title, url: abs }]);
+                                            }
+                                        },
+                                        onBack: function () { Lampa.Controller.toggle('content'); }
+                                    });
+                                } else {
+                                    Lampa.Player.play({ title: t.title, url: abs });
+                                    Lampa.Player.playlist([{ title: t.title, url: abs }]);
+                                }
                             } else if (s && s.status === 'error') {
                                 log('prepare error', s.error);
                                 Lampa.Noty.show('FastCDN: ' + String(s.error || 'ошибка подготовки').slice(0, 90));
