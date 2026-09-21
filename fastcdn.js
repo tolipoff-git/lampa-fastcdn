@@ -19,13 +19,16 @@
  * When set, .m3u8 streams are played through the relay.
  * If the Lampa page defines window.FASTCDN_RELAY (e.g. served from our server),
  * it is used as the default relay without any per-device setup.
+ * Via the relay a track can also be "prepared": downloaded whole and remuxed
+ * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
+ * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
- * @version 0.6.0
+ * @version 0.7.0
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.6.0';
+    var VERSION = '0.7.0';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -84,6 +87,13 @@
         var out = base + '/playlist.m3u8?u=' + b64url(url) + '&h=' + h;
         if (relayToken()) out += '&token=' + encodeURIComponent(relayToken());
         return out;
+    }
+
+    function relayFetch(path, opts) {
+        return fetch(path, opts || {}).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        });
     }
 
     /* ================================================================== *
@@ -351,7 +361,22 @@
                     quality: (qualities[choice.quality] || (t.qualities[0] || 'auto')),
                     info: ' / ' + byId[balanser].title
                 });
-                item.on('hover:enter', function () { _this.play(t, qualities); });
+                item.on('hover:enter', function () {
+                    if (!relayBase()) { _this.play(t, qualities); return; }
+                    Lampa.Select.show({
+                        title: 'FastCDN',
+                        items: [
+                            { title: '▶ Смотреть', action: 'play' },
+                            { title: '⬇ Подготовить на сервере (без рекламы)', action: 'prep' }
+                        ],
+                        onSelect: function (a) {
+                            Lampa.Controller.toggle('content');
+                            if (a.action === 'prep') _this.prepare(t, qualities);
+                            else _this.play(t, qualities);
+                        },
+                        onBack: function () { Lampa.Controller.toggle('content'); }
+                    });
+                });
                 item.on('hover:focus', function (e) { last = e.target; scroll.update($(e.target), true); });
                 _this.append(item);
             });
@@ -371,6 +396,43 @@
             };
             if (t.url) { done(t.url); return; }
             t.resolve(q, done, function () { Lampa.Noty.show('FastCDN: поток не получен'); });
+        };
+
+        this.prepare = function (t, qualities) {
+            var base = relayBase();
+            if (!base) { this.play(t, qualities); return; }
+            var q = qualities[choice.quality] || t.qualities[0] || 'Auto';
+            var name = (t.title || 'video').replace(/[^\w\-. ]+/g, '_').slice(0, 100);
+            var profile = Lampa.Storage.get('fastcdn_prepare_profile', 'copy') + '';
+            Lampa.Noty.show('FastCDN: подготовка на сервере...');
+            var start = function (url) {
+                var h = t.headers ? b64url(JSON.stringify(t.headers)) : '';
+                var path = base + '/dl?u=' + b64url(url) + '&h=' + h +
+                    '&profile=' + encodeURIComponent(profile) + '&name=' + encodeURIComponent(name);
+                if (relayToken()) path += '&token=' + encodeURIComponent(relayToken());
+                relayFetch(path, { method: 'POST' }).then(function (job) {
+                    if (!job || !job.id) { Lampa.Noty.show('FastCDN: не удалось запустить'); return; }
+                    var tries = 0;
+                    var poll = function () {
+                        tries++;
+                        relayFetch(base + '/dl/' + job.id).then(function (s) {
+                            if (s && s.status === 'done' && s.file) {
+                                Lampa.Noty.show('FastCDN: готово');
+                                Lampa.Player.play({ title: t.title, url: s.file });
+                                Lampa.Player.playlist([{ title: t.title, url: s.file }]);
+                            } else if (s && s.status === 'error') {
+                                log('prepare error', s.error);
+                                Lampa.Noty.show('FastCDN: ошибка подготовки');
+                            } else if (tries < 600) {
+                                setTimeout(poll, 3000);
+                            }
+                        }).catch(function () { if (tries < 600) setTimeout(poll, 3000); });
+                    };
+                    poll();
+                }).catch(function (e) { log('prepare start fail', e); Lampa.Noty.show('FastCDN: сервер недоступен'); });
+            };
+            if (t.url) { start(t.url); return; }
+            t.resolve(q, start, function () { Lampa.Noty.show('FastCDN: поток не получен'); });
         };
 
         this.loading = function (status) { this.activity.loader(status); };

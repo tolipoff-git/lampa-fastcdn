@@ -32,6 +32,20 @@ If the Lampa page itself is served from the relay host (our server), it may set
 `window.FASTCDN_RELAY = location.origin + '/hls'` (e.g. in `lampainit.js`); the
 plugin then uses the relay by default with no per-device setup.
 
+## Prepare (download whole episode on the server)
+Pressing a track when a relay is configured offers two actions: **watch** or
+**prepare on the server**. Prepare downloads the whole stream with
+N_m3u8DL-RE (parallel) and stores it under `/hls/media/`:
+
+- `fastcdn_prepare_profile = 'copy'` (default) — remux to **MKV**, streams copied
+  as-is (quality untouched, keeps all audio/subtitle tracks).
+- `fastcdn_prepare_profile = 'h264'` — transcode to **H.264/AAC MP4** (CRF 18) for
+  devices that cannot play HEVC/AV1.
+
+```
+Lampa.Storage.set('fastcdn_prepare_profile', 'copy'); // or 'h264'
+```
+
 ## Ad filtering
 The relay strips SCTE-35 ad breaks (`EXT-X-CUE-OUT` .. `EXT-X-CUE-IN`) from HLS
 media playlists by default (`HLS_STRIP_CUE_ADS=1`) and can drop ad-host
