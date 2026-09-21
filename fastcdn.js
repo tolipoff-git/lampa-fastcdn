@@ -15,15 +15,17 @@
  *
  * Optional server-side HLS relay (parallel chunk prefetch) can be enabled with:
  *   Lampa.Storage.set('fastcdn_relay', 'http://host:8080/hls')
- *   Lampa.Storage.set('fastcdn_relay_token', '<token>')
+ *   Lampa.Storage.set('fastcdn_relay_token', '<token>')   // if the relay needs it
  * When set, .m3u8 streams are played through the relay.
+ * If the Lampa page defines window.FASTCDN_RELAY (e.g. served from our server),
+ * it is used as the default relay without any per-device setup.
  *
- * @version 0.5.0
+ * @version 0.6.0
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.5.0';
+    var VERSION = '0.6.0';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -62,7 +64,9 @@
      * ================================================================== */
 
     function relayBase() {
-        return (Lampa.Storage.get('fastcdn_relay', '') + '').replace(/\/+$/, '');
+        var base = Lampa.Storage.get('fastcdn_relay', '') + '';
+        if (!base && window.FASTCDN_RELAY) base = window.FASTCDN_RELAY + '';
+        return base.replace(/\/+$/, '');
     }
 
     function relayToken() {

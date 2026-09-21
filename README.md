@@ -27,3 +27,12 @@ Lampa.Storage.set('fastcdn_relay_token', '<token>');
 ```
 
 Clear with `Lampa.Storage.set('fastcdn_relay', '')` to play directly.
+
+If the Lampa page itself is served from the relay host (our server), it may set
+`window.FASTCDN_RELAY = location.origin + '/hls'` (e.g. in `lampainit.js`); the
+plugin then uses the relay by default with no per-device setup.
+
+## Ad filtering
+The relay strips SCTE-35 ad breaks (`EXT-X-CUE-OUT` .. `EXT-X-CUE-IN`) from HLS
+media playlists by default (`HLS_STRIP_CUE_ADS=1`) and can drop ad-host
+segments via the `HLS_BLOCK` regex.
