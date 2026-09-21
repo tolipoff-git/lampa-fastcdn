@@ -23,12 +23,12 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
- * @version 0.7.0
+ * @version 0.7.1
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.7.0';
+    var VERSION = '0.7.1';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -281,7 +281,8 @@
                     _this.applyFilter();
                 }
             };
-            filter.render().find('.filter--sort span').text('CDN');
+            filter.render().find('.filter--sort span').text('Балансер');
+            filter.render().find('.filter--filter span').text('Озвучка / Качество');
             filter.render();
             files.append(scroll.render());
             scroll.append(filter.render());
