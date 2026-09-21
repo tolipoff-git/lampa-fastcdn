@@ -13,12 +13,17 @@
  * Sources that return nothing are hidden; the CDN picker lists only sources
  * that actually have video, ranked by response speed (fastest first).
  *
- * @version 0.4.0
+ * Optional server-side HLS relay (parallel chunk prefetch) can be enabled with:
+ *   Lampa.Storage.set('fastcdn_relay', 'http://host:8080/hls')
+ *   Lampa.Storage.set('fastcdn_relay_token', '<token>')
+ * When set, .m3u8 streams are played through the relay.
+ *
+ * @version 0.5.0
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.4.0';
+    var VERSION = '0.5.0';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -50,6 +55,31 @@
             log('request failed', url, a && a.status);
             if (err) err(a, c);
         }, false, { dataType: 'json' });
+    }
+
+    /* ================================================================== *
+     * Server-side HLS relay (optional)
+     * ================================================================== */
+
+    function relayBase() {
+        return (Lampa.Storage.get('fastcdn_relay', '') + '').replace(/\/+$/, '');
+    }
+
+    function relayToken() {
+        return Lampa.Storage.get('fastcdn_relay_token', '') + '';
+    }
+
+    function b64url(str) {
+        return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    function relayUrl(url, headers) {
+        var base = relayBase();
+        if (!base || !url || !/\.m3u8($|\?)/i.test(url)) return url;
+        var h = headers ? b64url(JSON.stringify(headers)) : '';
+        var out = base + '/playlist.m3u8?u=' + b64url(url) + '&h=' + h;
+        if (relayToken()) out += '&token=' + encodeURIComponent(relayToken());
+        return out;
     }
 
     /* ================================================================== *
@@ -330,6 +360,7 @@
             var q = qualities[choice.quality] || t.qualities[0] || 'Auto';
             Lampa.Noty.show('FastCDN: получение потока...');
             var done = function (url) {
+                url = relayUrl(url, t.headers);
                 log('play url', url);
                 Lampa.Player.play({ title: t.title, url: url });
                 Lampa.Player.playlist([{ title: t.title, url: url }]);
