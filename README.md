@@ -12,4 +12,7 @@ https://cdn.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@master/fastcdn.js
 
 ## Sources
 - CDNVideoHub (VK CDN backend)
-- Filmix (PRO+ supported) — in progress
+- Filmix (PRO+ supported)
+
+Sources that return no video are hidden; the CDN picker lists only sources that
+actually have streams, ranked by response speed (fastest first).

@@ -10,12 +10,15 @@
  *   - Filmix       (search -> post/<id>; via /filmix/ nginx proxy that sets the
  *                   app User-Agent Filmix requires; PRO+ token supported)
  *
- * @version 0.3.0
+ * Sources that return nothing are hidden; the CDN picker lists only sources
+ * that actually have video, ranked by response speed (fastest first).
+ *
+ * @version 0.4.0
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.3.0';
+    var VERSION = '0.4.0';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -200,7 +203,8 @@
         var files = new Lampa.Files(object);
         var filter = new Lampa.Filter(object);
         var last;
-        var data = {};       // sourceId -> { isSerial, tracks }
+        var data = {};       // sourceId -> { isSerial, tracks, speed }
+        var order = [];      // available sourceIds, fastest first
         var balanser = '';   // selected source id
         var choice = { voice: 0, season: 0, quality: 0 };
         var filter_state = {};
@@ -246,7 +250,10 @@
             this.activity.loader(true);
             var pending = SOURCES.length, results = {};
             SOURCES.forEach(function (src) {
+                var started = Date.now();
                 src.fetch(idsOf(object.movie), function (res) {
+                    res = res || {};
+                    res.speed = Date.now() - started;
                     results[src.id] = res;
                     if (--pending === 0) _this.ready(results);
                 }, function () {
@@ -257,10 +264,13 @@
 
         this.ready = function (results) {
             data = results;
-            var keys = SOURCES.map(function (s) { return s.id; }).filter(function (id) { return data[id] && data[id].tracks.length; });
-            if (!keys.length) { this.empty('FastCDN: ничего не найдено'); return; }
-            if (keys.indexOf(balanser) === -1) balanser = keys[0];
-            this.buildList(keys);
+            order = SOURCES.map(function (s) { return s.id; })
+                .filter(function (id) { return data[id] && data[id].tracks && data[id].tracks.length; })
+                .sort(function (a, b) { return (data[a].speed || 0) - (data[b].speed || 0); });
+            if (!order.length) { this.empty('FastCDN: ничего не найдено'); return; }
+            if (order.indexOf(balanser) === -1) balanser = order[0];
+            log('sources available (fastest first):', order.map(function (id) { return id + ' ' + (data[id].speed || 0) + 'ms'; }).join(', '));
+            this.buildList(order);
         };
 
         this.buildList = function (keys) {
@@ -278,8 +288,9 @@
             if (seasons.length) select.push(group('season', 'Сезон', seasons.map(function (s) { return 'Сезон ' + s; }), choice.season));
             if (qualities.length) select.push(group('quality', 'Качество', qualities, choice.quality));
             filter.set('filter', select);
-            filter.set('sort', SOURCES.map(function (s) {
-                return { title: s.title, source: s.id, selected: s.id === balanser };
+            filter.set('sort', keys.map(function (id) {
+                var ms = (data[id] && data[id].speed) ? ' · ' + data[id].speed + ' мс' : '';
+                return { title: byId[id].title + ms, source: id, selected: id === balanser };
             }));
             filter.chosen('sort', [byId[balanser].title]);
             filter.chosen('filter', chosenText(voices, seasons, qualities));
@@ -289,7 +300,7 @@
             Lampa.Controller.toggle('content');
         };
 
-        this.applyFilter = function () { this.buildList(Object.keys(data).filter(function (id) { return data[id] && data[id].tracks.length; })); };
+        this.applyFilter = function () { this.buildList(order); };
 
         this.appendList = function (tracks, voices, seasons, qualities) {
             scroll.body().find('.online').remove();
