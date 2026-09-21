@@ -23,12 +23,12 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
- * @version 0.7.1
+ * @version 0.7.2
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.7.1';
+    var VERSION = '0.7.2';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -150,10 +150,17 @@
                 '&user_dev_vendor=Xiaomi&user_dev_os=14&user_dev_apk=2.2.0&app_lang=ru-rRU';
         },
 
+        isBlocked: function (file) {
+            var link = (file && file.link ? file.link : '') + '';
+            var tr = (file && (file.translation || file.translations) ? (file.translation || file.translations) : '') + '';
+            return /abuse_/i.test(link) || /заблокирован/i.test(tr) || /заблокирован/i.test(link);
+        },
+
         movieTracks: function (pl) {
             var out = [], self = this;
             var push = function (file, key) {
                 if (!file || !file.link) return;
+                if (self.isBlocked(file)) return;
                 var q = qualityOf(file.link) || (file.qualities && Math.max.apply(null, file.qualities.filter(function (x) { return !isNaN(x); }))) || 0;
                 out.push({
                     voice: file.translation || (key ? 'Озвучка ' + key : 'Озвучка'),
@@ -170,8 +177,8 @@
             return Object.keys(best).map(function (k) { return best[k]; });
         },
 
-        serialTracks: function (pl) {
-            var out = [];
+serialTracks: function (pl) {
+            var out = [], self = this;
             Object.keys(pl).forEach(function (sid) {
                 var season = pl[sid];
                 Object.keys(season).forEach(function (vid) {
@@ -179,6 +186,7 @@
                     Object.keys(eps).forEach(function (eid) {
                         var file = eps[eid];
                         if (!file || !file.link) return;
+                        if (self.isBlocked(file)) return;
                         var qs = (file.qualities || []).filter(function (x) { return !isNaN(x); }).sort(function (a, b) { return b - a; });
                         out.push({
                             voice: (file.translation || ('Озвучка ' + vid)),
@@ -423,7 +431,7 @@
                                 Lampa.Player.playlist([{ title: t.title, url: s.file }]);
                             } else if (s && s.status === 'error') {
                                 log('prepare error', s.error);
-                                Lampa.Noty.show('FastCDN: ошибка подготовки');
+                                Lampa.Noty.show('FastCDN: ' + String(s.error || 'ошибка подготовки').slice(0, 90));
                             } else if (tries < 600) {
                                 setTimeout(poll, 3000);
                             }
