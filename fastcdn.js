@@ -23,6 +23,12 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.5 fixes:
+ *   - CDNVideoHub now falls back to aggr=imdb when no Kinopoisk id is available.
+ *     With a TMDB content source the CDN was silently hidden: movie.id is a TMDB
+ *     id and querying it as kp returns nothing, so Interstellar & co. looked
+ *     "missing" even though the CDN has them.
+ *
  * 0.8.4 fixes:
  *   - Filmix device id is now generated once and cached (was regenerated on
  *     every single request, which breaks any per-device session/PRO+ binding).
@@ -39,12 +45,12 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.4
+ * @version 0.8.5
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.4';
+    var VERSION = '0.8.5';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -160,8 +166,15 @@
 
         fetch: function (ids, ok, err) {
             var self = this;
-            if (!ids.kp) { err('no kp'); return; }
-            getJSON(self.base + 'playlist?pub=12&aggr=kp&id=' + encodeURIComponent(ids.kp), function (json) {
+            // The API accepts aggr=kp (Kinopoisk) as well as aggr=imdb. Preferring
+            // Kinopoisk but falling back to IMDb makes the source work on any
+            // Lampa content source: movie.id is a TMDB id when the balancer is
+            // TMDB, and querying it as kp returns nothing (a TMDB id is not a
+            // Kinopoisk id). IMDb is available on the movie object regardless.
+            var aggr = ids.kp ? 'kp' : (ids.imdb ? 'imdb' : '');
+            var id = ids.kp || ids.imdb;
+            if (!aggr) { err('no kp/imdb'); return; }
+            getJSON(self.base + 'playlist?pub=12&aggr=' + aggr + '&id=' + encodeURIComponent(id), function (json) {
                 if (!json || !json.items || !json.items.length) { err('empty'); return; }
                 var tracks = json.items.map(function (d) {
                     var voice = d.voiceStudio || d.voiceType || '';

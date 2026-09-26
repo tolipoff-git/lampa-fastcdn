@@ -7,7 +7,7 @@ Resolves streams directly from fast public CDNs (no proxy).
 Lampa → Settings → Extensions → Add plugin by URL:
 
 ```
-https://cdn.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@v0.8.4/fastcdn.js
+https://cdn.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@v0.8.5/fastcdn.js
 ```
 
 ## Sources
