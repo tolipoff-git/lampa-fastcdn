@@ -28,7 +28,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '0.8.2';
+    var VERSION = '0.8.3';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -51,6 +51,34 @@
         if (!url) return 0;
         var m = url.match(/\[[,\d]*?(\d{3,4})[,\d]*?\]/) || url.match(/(\d{3,4})p/) || url.match(/\/(\d{3,4})\b/);
         return m ? parseInt(m[1]) : 0;
+    }
+
+    // Playerjs-style CDN links carry a quality template, e.g.
+    //   .../1080p_[,,1080,720,480,].mp4   or   .../s01e06_%s.mp4
+    // They are not real files until the placeholder is replaced by a quality.
+    function linkQualities(url) {
+        if (!url) return [];
+        var out = [], m = url.match(/\[([,\d]*)\]/);
+        if (m) m[1].split(',').forEach(function (x) { var n = parseInt(x); if (n >= 300 && n <= 4320) out.push(n); });
+        if (!out.length) { var q = qualityOf(url); if (q) out.push(q); }
+        out.sort(function (a, b) { return b - a; });
+        return out;
+    }
+
+    function expandLink(url, quality) {
+        if (!url) return url;
+        var pick = parseInt(quality) || 0;
+        var b = url.match(/\[([,\d]*)\]/);
+        if (b) {
+            var list = b[1].split(',').map(function (x) { return parseInt(x); })
+                .filter(function (n) { return n >= 300 && n <= 4320; });
+            if (list.length) {
+                var chosen = (pick && list.indexOf(pick) !== -1) ? pick : Math.max.apply(null, list);
+                return url.replace(/\[[,\d]*\]/, String(chosen));
+            }
+        }
+        if (/%[sd]/.test(url)) return url.replace(/%[sd]/g, pick ? String(pick) : '1');
+        return url;
     }
 
     function getJSON(url, ok, err) {
@@ -166,13 +194,16 @@ return {
             var push = function (file, key) {
                 if (!file || !file.link) return;
                 if (self.isBlocked(file)) return;
-                var q = qualityOf(file.link) || (file.qualities && Math.max.apply(null, file.qualities.filter(function (x) { return !isNaN(x); }))) || 0;
+                var qs = linkQualities(file.link);
+                if (!qs.length && file.qualities) qs = file.qualities.filter(function (x) { return !isNaN(x); }).sort(function (a, b) { return b - a; });
+                var best = qs[0] || qualityOf(file.link) || 0;
                 out.push({
                     voice: file.translation || (key ? 'Озвучка ' + key : 'Озвучка'),
                     season: null, episode: null,
                     title: file.translation || 'Озвучка',
-                    qualities: [q ? q + 'p' : 'auto'],
-                    url: file.link
+                    qualities: qs.length ? qs.map(function (x) { return x + 'p'; }) : [best ? best + 'p' : 'auto'],
+                    url: expandLink(file.link, best),
+                    resolve: function (q, cb) { cb(expandLink(file.link, q)); }
                 });
             };
             if (Array.isArray(pl)) pl.forEach(function (f) { push(f, null); });
@@ -192,13 +223,16 @@ serialTracks: function (pl) {
                         var file = eps[eid];
                         if (!file || !file.link) return;
                         if (self.isBlocked(file)) return;
-                        var qs = (file.qualities || []).filter(function (x) { return !isNaN(x); }).sort(function (a, b) { return b - a; });
+                        var qs = linkQualities(file.link);
+                        if (!qs.length) qs = (file.qualities || []).filter(function (x) { return !isNaN(x); }).sort(function (a, b) { return b - a; });
+                        var best = qs[0] || qualityOf(file.link) || 0;
                         out.push({
                             voice: (file.translation || ('Озвучка ' + vid)),
                             season: parseInt(sid), episode: parseInt(eid),
                             title: 'S' + sid + 'E' + eid + ' · ' + (file.translation || 'озвучка'),
-                            qualities: [qs[0] ? qs[0] + 'p' : 'auto'],
-                            url: file.link
+                            qualities: qs.length ? qs.map(function (x) { return x + 'p'; }) : [best ? best + 'p' : 'auto'],
+                            url: expandLink(file.link, best),
+                            resolve: function (q, cb) { cb(expandLink(file.link, q)); }
                         });
                     });
                 });
@@ -416,8 +450,8 @@ serialTracks: function (pl) {
                 Lampa.Player.play({ title: t.title, url: url });
                 Lampa.Player.playlist([{ title: t.title, url: url }]);
             };
+            if (t.resolve) { t.resolve(q, done, function () { Lampa.Noty.show('FastCDN: поток не получен'); }); return; }
             if (t.url) { done(t.url); return; }
-            t.resolve(q, done, function () { Lampa.Noty.show('FastCDN: поток не получен'); });
         };
 
         this.prepare = function (t, qualities) {
@@ -494,8 +528,8 @@ serialTracks: function (pl) {
                     poll();
                 }).catch(function (e) { log('prepare start fail', e); Lampa.Noty.show('FastCDN: сервер недоступен'); });
             };
+            if (t.resolve) { t.resolve(q, start, function () { Lampa.Noty.show('FastCDN: поток не получен'); }); return; }
             if (t.url) { start(t.url); return; }
-            t.resolve(q, start, function () { Lampa.Noty.show('FastCDN: поток не получен'); });
         };
 
         this.loading = function (status) { this.activity.loader(status); };

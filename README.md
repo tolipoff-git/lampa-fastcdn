@@ -7,7 +7,7 @@ Resolves streams directly from fast public CDNs (no proxy).
 Lampa → Settings → Extensions → Add plugin by URL:
 
 ```
-https://cdn.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@v0.8.2/fastcdn.js
+https://cdn.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@v0.8.3/fastcdn.js
 ```
 
 ## Sources
@@ -67,5 +67,7 @@ Lampa.Storage.set('fastcdn_mpv_auto', false);
 After playback `mpv-bridge` deletes the prepared file from the server
 (`DELETE /hls/media/<file>`; the relay also GCs by TTL/size as a safety net).
 
-Links that cannot be downloaded server-side (VK CDN, `%s` segment templates) are
-not offered for prepare.
+Playerjs-style Filmix links carry a quality template (`.../1080p_[,,1080,720,480,].mp4`);
+the plugin expands it to a concrete quality for both playback and prepare (the raw
+template is not a real file and returns 400). Links that still cannot be downloaded
+server-side (VK CDN, unresolved `%s`) are not offered for prepare.
