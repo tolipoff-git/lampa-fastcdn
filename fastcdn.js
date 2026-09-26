@@ -23,12 +23,28 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
- * @version 0.8.0
+ * 0.8.4 fixes:
+ *   - Filmix device id is now generated once and cached (was regenerated on
+ *     every single request, which breaks any per-device session/PRO+ binding).
+ *   - Filmix search now requires an actual title/year match; a 0-score top
+ *     result is treated as "not found" instead of silently opening a
+ *     different title.
+ *   - idsOf() no longer guesses a Kinopoisk id from digit length alone
+ *     (collided with TMDB ids of the same length, e.g. "Inception" = 27205).
+ *   - Saved CDN choice (fastcdn_balanser) is now loaded on start instead of
+ *     being write-only.
+ *   - Switching the CDN source reuses already-fetched data instead of
+ *     re-querying every source over the network again.
+ *   - MPV bridge link no longer produces a double "?" when the source URL
+ *     already has a query string.
+ *   - Movie-card button now carries the FastCDN logo (circled play mark).
+ *
+ * @version 0.8.4
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.3';
+    var VERSION = '0.8.4';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -104,6 +120,10 @@
         return Lampa.Storage.get('fastcdn_relay_token', '') + '';
     }
 
+    // NOTE: intentionally kept on the escape/unescape trick instead of
+    // TextEncoder — Lampa also runs on old Tizen/webOS/Android TV WebViews
+    // where TextEncoder isn't guaranteed to exist, while escape/unescape is
+    // deprecated but universally still supported for exactly that reason.
     function b64url(str) {
         return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     }
@@ -130,7 +150,7 @@
 
     /* ================================================================== *
      * Sources. Each fetch(ids, ok, err) returns { isSerial, tracks: [...] }
-     * track = { voice, season, episode, title, qualities:[..], url?, headers?, no_prepare?, resolve?(q,cb,err) }
+     * track = { voice, season, episode, title, qualities:[..], url?, headers?, noPrepare?, resolve?(q,cb,err) }
      * ================================================================== */
 
     var CDNVideoHub = {
@@ -145,7 +165,7 @@
                 if (!json || !json.items || !json.items.length) { err('empty'); return; }
                 var tracks = json.items.map(function (d) {
                     var voice = d.voiceStudio || d.voiceType || '';
-return {
+                    return {
                         voice: voice,
                         season: d.season != null ? d.season : null,
                         episode: d.episode != null ? d.episode : null,
@@ -176,9 +196,22 @@ return {
         title: 'Filmix',
         app: '/filmix/', // nginx proxy on the Lampa origin (sets app User-Agent + CORS)
 
+        // Device id must stay stable across requests within one Lampa install —
+        // regenerating it per-request made every search/post call look like a
+        // brand new device to Filmix, which breaks any session/PRO+ binding
+        // tied to user_dev_id.
+        devId: function () {
+            var id = Lampa.Storage.get('fastcdn_filmix_dev_id', '') + '';
+            if (!id) {
+                id = randomHex(16);
+                Lampa.Storage.set('fastcdn_filmix_dev_id', id);
+            }
+            return id;
+        },
+
         dev: function () {
             var token = Lampa.Storage.get('filmix_token', '') + '';
-            return '?user_dev_id=' + randomHex(16) +
+            return '?user_dev_id=' + this.devId() +
                 '&user_dev_name=Xiaomi&user_dev_token=' + (token || 'aaaabbbbccccddddeeeeffffaaaabbbb') +
                 '&user_dev_vendor=Xiaomi&user_dev_os=14&user_dev_apk=2.2.0&app_lang=ru-rRU';
         },
@@ -213,7 +246,7 @@ return {
             return Object.keys(best).map(function (k) { return best[k]; });
         },
 
-serialTracks: function (pl) {
+        serialTracks: function (pl) {
             var out = [], self = this;
             Object.keys(pl).forEach(function (sid) {
                 var season = pl[sid];
@@ -246,13 +279,18 @@ serialTracks: function (pl) {
             getJSON(self.app + 'search' + self.dev() + '&story=' + encodeURIComponent(ids.title), function (cards) {
                 if (!cards || !cards.length) { err('no cards'); return; }
                 var n = norm(ids.title), year = ids.year;
-                var pick = cards.map(function (c) {
+                var scored = cards.map(function (c) {
                     var s = 0;
                     if (norm(c.title) === n || norm(c.original_title) === n) s += 5;
                     else if (norm(c.title).indexOf(n) !== -1 || norm(c.original_title).indexOf(n) !== -1) s += 2;
                     if (year && c.year == year) s += 3;
                     return { c: c, s: s };
-                }).sort(function (a, b) { return b.s - a.s; })[0].c;
+                }).sort(function (a, b) { return b.s - a.s; })[0];
+                // A score of 0 means nothing actually matched title or year —
+                // taking cards[0] anyway used to silently serve an unrelated
+                // title instead of reporting "not found".
+                if (!scored || scored.s <= 0) { err('no match'); return; }
+                var pick = scored.c;
                 getJSON(self.app + 'post/' + pick.id + self.dev(), function (data) {
                     var pl = (data && data.player_links) || {};
                     var tracks = (pl.playlist && Object.keys(pl.playlist).length)
@@ -273,13 +311,19 @@ serialTracks: function (pl) {
      * UI template
      * ================================================================== */
 
+    // Brand mark — circled play glyph. Shared by the movie-card button and the
+    // track list; currentColor keeps it readable in both (both are white text).
+    function logoSvg(size) {
+        return '<svg style="height:' + size + ';width:' + size + '" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+            '<circle cx="64" cy="64" r="56" stroke="currentColor" stroke-width="16"/>' +
+            '<path d="M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z" fill="currentColor"/></svg>';
+    }
+
     Lampa.Template.add('fastcdn_item',
         '<div class="online selector">' +
         '<div class="online__body">' +
         '<div style="position:absolute;left:0;top:-0.3em;width:2.4em;height:2.4em">' +
-        '<svg style="height:2.4em;width:2.4em" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">' +
-        '<circle cx="64" cy="64" r="56" stroke="white" stroke-width="16"/>' +
-        '<path d="M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z" fill="white"/></svg></div>' +
+        logoSvg('2.4em') + '</div>' +
         '<div class="online__title" style="padding-left:2.1em">{title}</div>' +
         '<div class="online__quality" style="padding-left:3.4em">{quality}{info}</div>' +
         '</div></div>');
@@ -296,7 +340,7 @@ serialTracks: function (pl) {
         var last;
         var data = {};       // sourceId -> { isSerial, tracks, speed }
         var order = [];      // available sourceIds, fastest first
-        var balanser = '';   // selected source id
+        var balanser = Lampa.Storage.get('fastcdn_balanser', '') + ''; // restore last choice; falls back to fastest if unavailable
         var choice = { voice: 0, season: 0, quality: 0 };
         var filter_state = {};
 
@@ -317,8 +361,11 @@ serialTracks: function (pl) {
                 if (type === 'sort') {
                     balanser = a.source;
                     Lampa.Storage.set('fastcdn_balanser', balanser);
-                    choice.voice = 0; choice.season = 0;
-                    _this.search();
+                    choice.voice = 0; choice.season = 0; choice.quality = 0;
+                    // Sources are already fetched once in this.search(); switching
+                    // the balanser only needs to rebuild the list from cached
+                    // `data`, not hit the network again for every source.
+                    _this.buildList(order);
                     setTimeout(Lampa.Select.close, 10);
                 } else if (type === 'filter') {
                     if (a.reset) { choice.voice = 0; choice.season = 0; choice.quality = 0; }
@@ -486,8 +533,13 @@ serialTracks: function (pl) {
                                 Lampa.Noty.show('FastCDN: готово');
                                 var abs = /^https?:/i.test(s.file) ? s.file : (location.origin + s.file);
                                 var toMpv = function () {
+                                    // `abs` can already carry its own query string (e.g. a relay
+                                    // token), so blindly appending "?title=" produced an invalid
+                                    // URL with two "?" once url-decoded on the MPV bridge side.
+                                    var sep = abs.indexOf('?') === -1 ? '?' : '&';
+                                    var payload = abs + sep + 'title=' + (t.title || '');
                                     var a = document.createElement('a');
-                                    a.href = 'mpv://' + encodeURIComponent(abs + '?title=' + (t.title || ''));
+                                    a.href = 'mpv://' + encodeURIComponent(payload);
                                     a.target = '_top';
                                     document.body.appendChild(a);
                                     a.click();
@@ -593,10 +645,13 @@ serialTracks: function (pl) {
     }
 
     function idsOf(movie) {
-        var src = Lampa.Storage.get('source') || '';
+        var src = (Lampa.Storage.get('source') || '') + '';
         var kp = movie.kinopoisk_id || movie.kp_id || movie.kinopoiskId || null;
-        if (!kp && src === 'cub') kp = movie.id;
-        if (!kp && movie.id && String(movie.id).length >= 5) kp = movie.id;
+        // Only trust movie.id as a Kinopoisk id on sources that are actually
+        // Kinopoisk-based. The old "5+ digits" guess was unsafe: TMDB ids are
+        // just as often 5 digits (e.g. "Inception" = tmdb id 27205) and would
+        // silently query CDNVideoHub for a completely different title.
+        if (!kp && /^(cub|kp|kinopoisk)$/i.test(src)) kp = movie.id;
         var date = movie.release_date || movie.first_air_date || movie.last_air_date || '';
         return {
             kp: kp,
@@ -628,7 +683,7 @@ serialTracks: function (pl) {
     function addButton() {
         Lampa.Listener.follow('full', function (e) {
             if (e.type !== 'complite') return;
-            var btn = $('<div class="full-start__button selector view--fastcdn"><span>Fast CDN</span></div>');
+            var btn = $('<div class="full-start__button selector view--fastcdn">' + logoSvg('1.7em') + '<span>Fast CDN</span></div>');
             btn.on('hover:enter', function () { loadOnline(e.data.movie); });
             var host = e.object.activity.render().find('.view--online_mod');
             if (!host.length) host = e.object.activity.render().find('.view--torrent');
