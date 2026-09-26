@@ -23,11 +23,16 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.7 changes:
+ *   - Install/self-update URL switched to jsDelivr @latest. @master is stuck
+ *     behind jsDelivr's 12 h branch cache (stale code even after a cache purge),
+ *     while @latest follows the newest release tag immediately.
+ *
  * 0.8.6 changes:
- *   - Auto-update: install once from the stable jsDelivr @master URL; the plugin
- *     checks that URL on start and reloads itself when a newer version is live
- *     (never during playback). Releases purge the jsDelivr @master cache, so the
- *     update is picked up immediately without changing the install URL.
+ *   - Auto-update: install once from the stable jsDelivr URL; the plugin checks
+ *     that URL on start and reloads itself when a newer version is live (never
+ *     during playback). Releases purge the jsDelivr cache, so the update is
+ *     picked up immediately without changing the install URL.
  *
  * 0.8.5 fixes:
  *   - CDNVideoHub now falls back to aggr=imdb when no Kinopoisk id is available.
@@ -51,12 +56,12 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.6
+ * @version 0.8.7
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.6';
+    var VERSION = '0.8.7';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -724,7 +729,7 @@
     // once when it is newer. The release flow purges jsDelivr's @master cache,
     // so the reload really gets the new file. The install URL stays @master
     // forever — no reinstall and no per-version URL changes for the user.
-    var UPDATE_URL = 'https://cdn.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@master/fastcdn.js';
+    var UPDATE_URL = 'https://cdn.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@latest/fastcdn.js';
 
     function checkUpdate() {
         if (typeof fetch !== 'function') return;

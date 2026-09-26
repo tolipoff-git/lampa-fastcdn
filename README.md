@@ -7,21 +7,22 @@ Resolves streams directly from fast public CDNs (no proxy).
 Lampa → Settings → Extensions → Add plugin by URL:
 
 ```
-https://cdn.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@master/fastcdn.js
+https://cdn.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@latest/fastcdn.js
 ```
 
 Install once — this URL is stable and always serves the latest release.
 
 ## Updates
 The plugin updates itself: Lampa re-fetches every plugin on each app start, and
-the plugin also checks `@master` while running and reloads when a newer version is
-live (never during playback). Releases purge the jsDelivr `@master` cache, so a
-fresh push is visible immediately — no need to change the URL or reinstall.
+the plugin also checks `@latest` while running and reloads when a newer version is
+live (never during playback). `@latest` resolves to the newest release tag, so a
+fresh push (with a bumped `VERSION` and matching tag) is visible immediately — no
+need to change the URL or reinstall.
 
-To publish a release (used by the repo owner):
+To publish a release (repo owner):
 
 ```
-./release.sh "fix: ..."   # commit + push + tag + purge jsDelivr
+./release.sh "fix: ..."   # commit + push + tag from VERSION + purge jsDelivr
 ```
 
 ## Sources
