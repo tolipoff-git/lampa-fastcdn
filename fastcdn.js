@@ -28,7 +28,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '0.8.0';
+    var VERSION = '0.8.1';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -257,7 +257,7 @@ serialTracks: function (pl) {
     function Component(object) {
         var self = this;
         var scroll = new Lampa.Scroll({ mask: true, over: true });
-        var files = new Lampa.Files(object);
+        var files = Lampa.Explorer ? new Lampa.Explorer(object) : new Lampa.Files(object);
         var filter = new Lampa.Filter(object);
         var last;
         var data = {};       // sourceId -> { isSerial, tracks, speed }
@@ -297,8 +297,16 @@ serialTracks: function (pl) {
             filter.render().find('.filter--sort span').text('Балансер');
             filter.render().find('.filter--filter span').text('Озвучка / Качество');
             filter.render();
-            files.append(scroll.render());
-            scroll.append(filter.render());
+            if (typeof files.appendHead === 'function' && typeof files.appendFiles === 'function') {
+                // Explorer layout: filter into the header, track list into the
+                // files body, sized below the header so it scrolls.
+                scroll.minus(files.render().find('.explorer__files-head'));
+                files.appendHead(filter.render());
+                files.appendFiles(scroll.render());
+            } else {
+                files.append(scroll.render());
+                scroll.append(filter.render());
+            }
             this.search();
             return this.render();
         };
