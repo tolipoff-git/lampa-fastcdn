@@ -7,7 +7,7 @@ Resolves streams directly from fast public CDNs (no proxy).
 Lampa → Settings → Extensions → Add plugin by URL:
 
 ```
-https://cdn.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@v0.8.1/fastcdn.js
+https://cdn.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@v0.8.2/fastcdn.js
 ```
 
 ## Sources
@@ -52,6 +52,20 @@ media playlists by default (`HLS_STRIP_CUE_ADS=1`) and can drop ad-host
 segments via the `HLS_BLOCK` regex.
 
 ## MPV bridge
-After a prepared file is ready the plugin offers **"Открыть в MPV (bridge)"** — it opens the
-`mpv://` scheme handled by `~/.local/bin/mpv-bridge` (desktop handler), or **"Смотреть здесь"**
-to play in the browser. Disable the prompt with `Lampa.Storage.set('fastcdn_mpv', false)`.
+After a prepared file is ready the plugin **hands it straight to MPV** via the `mpv://`
+scheme handled by `~/.local/bin/mpv-bridge` (desktop handler) — the pipeline is
+"server finished -> MPV plays the server file". Settings:
+
+- `fastcdn_mpv = false` — play in the browser instead of MPV.
+- `fastcdn_mpv_auto = false` — show the "Open in MPV / Watch here" prompt instead of
+  auto-opening MPV.
+
+```
+Lampa.Storage.set('fastcdn_mpv_auto', false);
+```
+
+After playback `mpv-bridge` deletes the prepared file from the server
+(`DELETE /hls/media/<file>`; the relay also GCs by TTL/size as a safety net).
+
+Links that cannot be downloaded server-side (VK CDN, `%s` segment templates) are
+not offered for prepare.

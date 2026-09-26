@@ -28,7 +28,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '0.8.1';
+    var VERSION = '0.8.2';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -424,12 +424,18 @@ serialTracks: function (pl) {
             var base = relayBase();
             if (!base || t.noPrepare) { this.play(t, qualities); return; }
             var q = qualities[choice.quality] || t.qualities[0] || 'Auto';
-            var name = (t.title || 'video').replace(/[^\w\-. ]+/g, '_').slice(0, 100);
+            var name = (t.title || 'video').replace(/[^A-Za-z0-9\u0400-\u04FF\-. ]+/g, '_').slice(0, 100);
             var profile = Lampa.Storage.get('fastcdn_prepare_profile', 'copy') + '';
             Lampa.Noty.show('FastCDN: подготовка на сервере...');
             var start = function (url) {
                 if (isVkUrl(url)) {
                     Lampa.Noty.show('FastCDN: VK-поток нельзя скачать — смотрите через релей');
+                    return;
+                }
+                if (/%[sd]/i.test(url)) {
+                    // CDN segment template (e.g. s01e06_%s.mp4) — not a real file,
+                    // the downloader would get 400 and leave nothing to play.
+                    Lampa.Noty.show('FastCDN: ссылка-шаблон (%s) — подготовка невозможна');
                     return;
                 }
                 var h = t.headers ? b64url(JSON.stringify(t.headers)) : '';
@@ -453,7 +459,16 @@ serialTracks: function (pl) {
                                     a.click();
                                     a.remove();
                                 };
-                                if (Lampa.Storage.get('fastcdn_mpv', true) !== false) {
+                                var playHere = function () {
+                                    Lampa.Player.play({ title: t.title, url: abs });
+                                    Lampa.Player.playlist([{ title: t.title, url: abs }]);
+                                };
+                                if (Lampa.Storage.get('fastcdn_mpv', true) === false) {
+                                    playHere();
+                                } else if (Lampa.Storage.get('fastcdn_mpv_auto', true) !== false) {
+                                    // pipeline: server finished preparing -> hand straight to MPV
+                                    toMpv();
+                                } else {
                                     Lampa.Select.show({
                                         title: 'FastCDN: воспроизведение',
                                         items: [
@@ -463,16 +478,10 @@ serialTracks: function (pl) {
                                         onSelect: function (a) {
                                             Lampa.Controller.toggle('content');
                                             if (/MPV/i.test(a.title)) toMpv();
-                                            else {
-                                                Lampa.Player.play({ title: t.title, url: abs });
-                                                Lampa.Player.playlist([{ title: t.title, url: abs }]);
-                                            }
+                                            else playHere();
                                         },
                                         onBack: function () { Lampa.Controller.toggle('content'); }
                                     });
-                                } else {
-                                    Lampa.Player.play({ title: t.title, url: abs });
-                                    Lampa.Player.playlist([{ title: t.title, url: abs }]);
                                 }
                             } else if (s && s.status === 'error') {
                                 log('prepare error', s.error);
