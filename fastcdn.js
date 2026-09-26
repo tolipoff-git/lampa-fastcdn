@@ -23,6 +23,12 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.6 changes:
+ *   - Auto-update: install once from the stable jsDelivr @master URL; the plugin
+ *     checks that URL on start and reloads itself when a newer version is live
+ *     (never during playback). Releases purge the jsDelivr @master cache, so the
+ *     update is picked up immediately without changing the install URL.
+ *
  * 0.8.5 fixes:
  *   - CDNVideoHub now falls back to aggr=imdb when no Kinopoisk id is available.
  *     With a TMDB content source the CDN was silently hidden: movie.id is a TMDB
@@ -45,12 +51,12 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.5
+ * @version 0.8.6
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.5';
+    var VERSION = '0.8.6';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -708,5 +714,45 @@
     if (window.appready) addButton();
     else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') addButton(); });
 
+    /* ================================================================== *
+     * Self-update
+     * ================================================================== */
+
+    // Lampa re-fetches every plugin on each app start, so a released version is
+    // picked up on the next launch. This additionally updates a *running*
+    // session: we read the canonical @master URL back (cache-busted) and reload
+    // once when it is newer. The release flow purges jsDelivr's @master cache,
+    // so the reload really gets the new file. The install URL stays @master
+    // forever — no reinstall and no per-version URL changes for the user.
+    var UPDATE_URL = 'https://cdn.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@master/fastcdn.js';
+
+    function checkUpdate() {
+        if (typeof fetch !== 'function') return;
+        fetch(UPDATE_URL + '?ts=' + Date.now(), { cache: 'no-store' }).then(function (r) {
+            return r.ok ? r.text() : '';
+        }).then(function (code) {
+            var m = (code || '').match(/VERSION\s*=\s*'([0-9]+\.[0-9]+\.[0-9]+)'/);
+            if (!m || m[1] === VERSION) return;
+
+            var seen = false;
+            try { seen = !!sessionStorage.getItem('fastcdn_upd_' + m[1]); } catch (e) {}
+
+            if (seen) return;
+
+            log('update available:', m[1], '(running', VERSION + ')');
+
+            // Never yank the page out from under playback; next app start updates it.
+            if (Lampa.Player && Lampa.Player.opened && Lampa.Player.opened()) {
+                log('player is open — will update on next start');
+                return;
+            }
+
+            try { sessionStorage.setItem('fastcdn_upd_' + m[1], '1'); } catch (e) {}
+            Lampa.Noty.show('FastCDN: обновление v' + m[1] + ' — перезагрузка...');
+            setTimeout(function () { location.reload(); }, 2500);
+        }).catch(function () {});
+    }
+
     log('v' + VERSION + ' loaded; sources:', SOURCES.map(function (s) { return s.id; }).join(','));
+    setTimeout(checkUpdate, 5000);
 })();
