@@ -23,6 +23,14 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.9 fixes:
+ *   - CDNVideoHub now prefers progressive MP4 (mpeg*Url) over HLS. VK's HLS
+ *     playlist sends no Access-Control-Allow-Origin, so hls.js in a browser
+ *     cannot fetch it (page is HTTPS, stream cross-origin), and the server
+ *     relay's fetches of VK are unreliable (intermittent 400). MP4 plays
+ *     natively via <video>, needs no CORS and no relay. HLS stays as a
+ *     last-resort fallback only.
+ *
  * 0.8.8 fixes:
  *   - CDNVideoHub (VK CDN) .m3u8 is no longer sent through the server HLS relay.
  *     VK binds the stream to the caller's IP (srcIp= embedded in the URL), so
@@ -63,7 +71,7 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.8
+ * @version 0.8.9
  */
 (function () {
     'use strict';
@@ -211,10 +219,15 @@
                             getJSON(self.base + 'video/' + d.vkId, function (r) {
                                 var s = r && r.sources;
                                 if (!s) { e2('no sources'); return; }
+                                // Prefer progressive MP4 over HLS: VK's HLS playlist
+                                // has no Access-Control-Allow-Origin (hls.js can't
+                                // fetch it cross-origin from our HTTPS page) and the
+                                // server relay's VK fetches are unreliable. MP4 plays
+                                // natively. HLS is kept only as a last resort.
                                 var order = q === '1080p' ? ['mpegFullHdUrl', 'mpegHighUrl', 'mpegMediumUrl', 'hlsUrl']
-                                    : q === '720p' ? ['mpegHighUrl', 'mpegMediumUrl', 'mpegFullHdUrl', 'hlsUrl']
-                                        : q === '480p' ? ['mpegMediumUrl', 'mpegHighUrl', 'hlsUrl']
-                                            : ['hlsUrl', 'mpegFullHdUrl', 'mpegHighUrl', 'mpegMediumUrl'];
+                                    : q === '720p' ? ['mpegHighUrl', 'mpegFullHdUrl', 'mpegMediumUrl', 'hlsUrl']
+                                        : q === '480p' ? ['mpegMediumUrl', 'mpegHighUrl', 'mpegFullHdUrl', 'hlsUrl']
+                                            : ['mpegFullHdUrl', 'mpegHighUrl', 'mpegMediumUrl', 'hlsUrl'];
                                 for (var i = 0; i < order.length; i++) if (s[order[i]]) { cb(s[order[i]]); return; }
                                 e2('no url');
                             }, e2);
