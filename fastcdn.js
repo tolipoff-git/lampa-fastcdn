@@ -23,6 +23,13 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.8 fixes:
+ *   - CDNVideoHub (VK CDN) .m3u8 is no longer sent through the server HLS relay.
+ *     VK binds the stream to the caller's IP (srcIp= embedded in the URL), so
+ *     the relay's different egress IP got "400 Bad Request" and browser
+ *     playback failed with a 502 from the relay — while MPV (direct from the
+ *     client IP) worked. VK streams now play directly in the browser.
+ *
  * 0.8.7 changes:
  *   - Install/self-update URL switched to jsDelivr @latest. @master is stuck
  *     behind jsDelivr's 12 h branch cache (stale code even after a cache purge),
@@ -56,7 +63,7 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.7
+ * @version 0.8.8
  */
 (function () {
     'use strict';
@@ -148,6 +155,10 @@
     function relayUrl(url, headers) {
         var base = relayBase();
         if (!base || !url || !/\.m3u8($|\?)/i.test(url)) return url;
+        // VK CDN binds the stream to the caller's IP (srcIp= in the URL), so the
+        // server relay (different egress IP) gets 400. Play VK directly in the
+        // browser instead — the client IP matches the one that requested it.
+        if (isVkUrl(url)) return url;
         var h = headers ? b64url(JSON.stringify(headers)) : '';
         var out = base + '/playlist.m3u8?u=' + b64url(url) + '&h=' + h;
         if (relayToken()) out += '&token=' + encodeURIComponent(relayToken());
