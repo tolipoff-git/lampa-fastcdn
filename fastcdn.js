@@ -23,6 +23,14 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.10 fixes:
+ *   - Reverted 0.8.8/0.8.9. The real cause of "no playback in the browser" was
+ *     a stale nginx config on the server: the /hls/ location was not active, so
+ *     the relay answered 404 to everything (fixed with `nginx -s reload`).
+ *     Verified in a real browser: master -> media -> segment all 200 through the
+ *     relay, segments carry Access-Control-Allow-Origin, so hls.js plays VK HLS
+ *     fine via the relay. VK HLS is relayed again (the original design).
+ *
  * 0.8.9 fixes:
  *   - CDNVideoHub now prefers progressive MP4 (mpeg*Url) over HLS. VK's HLS
  *     playlist sends no Access-Control-Allow-Origin, so hls.js in a browser
@@ -71,7 +79,7 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.9
+ * @version 0.8.10
  */
 (function () {
     'use strict';
@@ -163,10 +171,6 @@
     function relayUrl(url, headers) {
         var base = relayBase();
         if (!base || !url || !/\.m3u8($|\?)/i.test(url)) return url;
-        // VK CDN binds the stream to the caller's IP (srcIp= in the URL), so the
-        // server relay (different egress IP) gets 400. Play VK directly in the
-        // browser instead — the client IP matches the one that requested it.
-        if (isVkUrl(url)) return url;
         var h = headers ? b64url(JSON.stringify(headers)) : '';
         var out = base + '/playlist.m3u8?u=' + b64url(url) + '&h=' + h;
         if (relayToken()) out += '&token=' + encodeURIComponent(relayToken());
@@ -219,15 +223,10 @@
                             getJSON(self.base + 'video/' + d.vkId, function (r) {
                                 var s = r && r.sources;
                                 if (!s) { e2('no sources'); return; }
-                                // Prefer progressive MP4 over HLS: VK's HLS playlist
-                                // has no Access-Control-Allow-Origin (hls.js can't
-                                // fetch it cross-origin from our HTTPS page) and the
-                                // server relay's VK fetches are unreliable. MP4 plays
-                                // natively. HLS is kept only as a last resort.
                                 var order = q === '1080p' ? ['mpegFullHdUrl', 'mpegHighUrl', 'mpegMediumUrl', 'hlsUrl']
-                                    : q === '720p' ? ['mpegHighUrl', 'mpegFullHdUrl', 'mpegMediumUrl', 'hlsUrl']
-                                        : q === '480p' ? ['mpegMediumUrl', 'mpegHighUrl', 'mpegFullHdUrl', 'hlsUrl']
-                                            : ['mpegFullHdUrl', 'mpegHighUrl', 'mpegMediumUrl', 'hlsUrl'];
+                                    : q === '720p' ? ['mpegHighUrl', 'mpegMediumUrl', 'mpegFullHdUrl', 'hlsUrl']
+                                        : q === '480p' ? ['mpegMediumUrl', 'mpegHighUrl', 'hlsUrl']
+                                            : ['hlsUrl', 'mpegFullHdUrl', 'mpegHighUrl', 'mpegMediumUrl'];
                                 for (var i = 0; i < order.length; i++) if (s[order[i]]) { cb(s[order[i]]); return; }
                                 e2('no url');
                             }, e2);
