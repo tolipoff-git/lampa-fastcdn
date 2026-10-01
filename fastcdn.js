@@ -23,6 +23,13 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.11 fixes:
+ *   - The VERSION constant is bumped again. 0.8.8-0.8.10 only changed the header
+ *     @version, so the self-update (which compares VERSION) never fired and a
+ *     client stuck on the buggy 0.8.9 (MP4 preference) could not converge to the
+ *     fixed relay build. Behaviour is the 0.8.10 relay build; VERSION = 0.8.11
+ *     so every client auto-updates to it.
+ *
  * 0.8.10 fixes:
  *   - Reverted 0.8.8/0.8.9. The real cause of "no playback in the browser" was
  *     a stale nginx config on the server: the /hls/ location was not active, so
@@ -79,12 +86,12 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.10
+ * @version 0.8.11
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.7';
+    var VERSION = '0.8.11';
     var LOG = '[FastCDN] ';
 
     function log() {
