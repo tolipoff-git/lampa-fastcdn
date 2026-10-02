@@ -23,6 +23,12 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.16 changes:
+ *   - MPV handoff now calls the local bridge endpoint
+ *     (http://127.0.0.1:12777/play) first, because Chromium refuses to launch
+ *     the mpv:// scheme without user activation and rewrites it into
+ *     http://mpv//… . The scheme remains the fallback.
+ *
  * 0.8.15 fixes:
  *   - After "Подготовить" the plugin no longer auto-launches MPV. Chromium only
  *     starts an external protocol (mpv://) from a real user gesture; the
@@ -110,12 +116,12 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.15
+ * @version 0.8.16
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.15';
+    var VERSION = '0.8.16';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -657,17 +663,31 @@
                                 var fileUrl = s.file.replace(/([^/]*)$/, function (m) { return encodeURIComponent(m); });
                                 var abs = /^https?:/i.test(fileUrl) ? fileUrl : (location.origin + fileUrl);
                                 var toMpv = function () {
-                                    // `abs` can already carry its own query string (e.g. a relay
-                                    // token), so blindly appending "?title=" produced an invalid
-                                    // URL with two "?" once url-decoded on the MPV bridge side.
-                                    var sep = abs.indexOf('?') === -1 ? '?' : '&';
-                                    var payload = abs + sep + 'title=' + (t.title || '');
-                                    var a = document.createElement('a');
-                                    a.href = 'mpv://' + encodeURIComponent(payload);
-                                    a.target = '_top';
-                                    document.body.appendChild(a);
-                                    a.click();
-                                    a.remove();
+                                    // Prefer the local bridge endpoint: Chromium will not
+                                    // launch the mpv:// scheme without user activation and
+                                    // rewrites it into http://mpv//… (ERR_NAME_NOT_RESOLVED).
+                                    // http://127.0.0.1 is exempt from mixed-content, so this
+                                    // works on the machine that runs the bridge; the scheme
+                                    // stays as the fallback for other setups.
+                                    var scheme = function () {
+                                        // `abs` can already carry its own query string (e.g. a relay
+                                        // token), so blindly appending "?title=" produced an invalid
+                                        // URL with two "?" once url-decoded on the MPV bridge side.
+                                        var sep = abs.indexOf('?') === -1 ? '?' : '&';
+                                        var payload = abs + sep + 'title=' + (t.title || '');
+                                        var a = document.createElement('a');
+                                        a.href = 'mpv://' + encodeURIComponent(payload);
+                                        a.target = '_top';
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        a.remove();
+                                    };
+                                    var bridge = 'http://127.0.0.1:' + (window.FASTCDN_BRIDGE_PORT || 12777) +
+                                        '/play?url=' + encodeURIComponent(abs) +
+                                        '&title=' + encodeURIComponent(t.title || '');
+                                    fetch(bridge, { cache: 'no-store' })
+                                        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); })
+                                        .catch(scheme);
                                 };
                                 var playHere = function () {
                                     Lampa.Player.play({ title: t.title, url: abs });
