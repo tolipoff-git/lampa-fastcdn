@@ -23,6 +23,12 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.18 changes:
+ *   - The track menu now offers all three actions itself: "Смотреть в браузере",
+ *     "Открыть в MPV (bridge)" and (for downloadable sources) "Подготовить на
+ *     сервере". Previously the MPV option came from the mpv_lampa overlay, which
+ *     is now suppressed for FastCDN plays.
+ *
  * 0.8.17 fixes:
  *   - CDNVideoHub always plays HLS through the relay, for every quality. The
  *     progressive MP4s are cross-origin (no CORS) and can reject the browser's
@@ -123,12 +129,12 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.17
+ * @version 0.8.18
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.17';
+    var VERSION = '0.8.18';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -269,6 +275,28 @@
     }
 
     function progressHide() { $('#fastcdn-progress').remove(); }
+
+    // Hand a stream URL to the desktop bridge. Prefer the local endpoint:
+    // Chromium will not launch the mpv:// scheme without user activation and
+    // rewrites it into http://mpv//… (ERR_NAME_NOT_RESOLVED); http://127.0.0.1 is
+    // exempt from mixed-content. The scheme stays as the fallback.
+    function toMpvUrl(abs, title) {
+        var scheme = function () {
+            var sep = abs.indexOf('?') === -1 ? '?' : '&';
+            var payload = abs + sep + 'title=' + (title || '');
+            var a = document.createElement('a');
+            a.href = 'mpv://' + encodeURIComponent(payload);
+            a.target = '_top';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        };
+        var bridge = 'http://127.0.0.1:' + (window.FASTCDN_BRIDGE_PORT || 12777) +
+            '/play?url=' + encodeURIComponent(abs) + '&title=' + encodeURIComponent(title || '');
+        fetch(bridge, { cache: 'no-store' })
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); })
+            .catch(scheme);
+    }
 
     function isVkUrl(url) {
         return /vkuser\.net|vk\.com|vkvideo|okcdn|mycdn\.me|vk-cdn/i.test(url || '');
@@ -599,17 +627,21 @@
                     info: ' / ' + byId[balanser].title
                 });
                 item.on('hover:enter', function () {
-                    if (!relayBase() || t.noPrepare) { _this.play(t, qualities); return; }
+                    var items = [{ title: '▶ Смотреть в браузере', action: 'browser' }];
+                    if (Lampa.Storage.get('fastcdn_mpv', true) !== false) {
+                        items.push({ title: '🖥 Открыть в MPV (bridge)', action: 'mpv' });
+                    }
+                    if (relayBase() && !t.noPrepare) {
+                        items.push({ title: '⬇ Подготовить на сервере (без рекламы)', action: 'prep' });
+                    }
+                    if (items.length === 1) { _this.play(t, qualities, 'browser'); return; }
                     Lampa.Select.show({
                         title: 'FastCDN',
-                        items: [
-                            { title: '▶ Смотреть', action: 'play' },
-                            { title: '⬇ Подготовить на сервере (без рекламы)', action: 'prep' }
-                        ],
+                        items: items,
                         onSelect: function (a) {
                             Lampa.Controller.toggle('content');
                             if (a.action === 'prep') _this.prepare(t, qualities);
-                            else _this.play(t, qualities);
+                            else _this.play(t, qualities, a.action);
                         },
                         onBack: function () { Lampa.Controller.toggle('content'); }
                     });
@@ -622,12 +654,13 @@
 
         this.append = function (item) { scroll.append(item); };
 
-        this.play = function (t, qualities) {
+        this.play = function (t, qualities, mode) {
             var q = qualities[choice.quality] || t.qualities[0] || 'Auto';
             Lampa.Noty.show('FastCDN: получение потока...');
             var done = function (url) {
                 url = relayUrl(url, t.headers);
                 log('play url', url);
+                if (mode === 'mpv') { toMpvUrl(url, t.title); return; }
                 Lampa.Player.play({ title: t.title, url: url, fastcdn: true });
                 Lampa.Player.playlist([{ title: t.title, url: url }]);
             };
@@ -670,33 +703,7 @@
                                 // literal spaces, and titles can also contain Cyrillic.
                                 var fileUrl = s.file.replace(/([^/]*)$/, function (m) { return encodeURIComponent(m); });
                                 var abs = /^https?:/i.test(fileUrl) ? fileUrl : (location.origin + fileUrl);
-                                var toMpv = function () {
-                                    // Prefer the local bridge endpoint: Chromium will not
-                                    // launch the mpv:// scheme without user activation and
-                                    // rewrites it into http://mpv//… (ERR_NAME_NOT_RESOLVED).
-                                    // http://127.0.0.1 is exempt from mixed-content, so this
-                                    // works on the machine that runs the bridge; the scheme
-                                    // stays as the fallback for other setups.
-                                    var scheme = function () {
-                                        // `abs` can already carry its own query string (e.g. a relay
-                                        // token), so blindly appending "?title=" produced an invalid
-                                        // URL with two "?" once url-decoded on the MPV bridge side.
-                                        var sep = abs.indexOf('?') === -1 ? '?' : '&';
-                                        var payload = abs + sep + 'title=' + (t.title || '');
-                                        var a = document.createElement('a');
-                                        a.href = 'mpv://' + encodeURIComponent(payload);
-                                        a.target = '_top';
-                                        document.body.appendChild(a);
-                                        a.click();
-                                        a.remove();
-                                    };
-                                    var bridge = 'http://127.0.0.1:' + (window.FASTCDN_BRIDGE_PORT || 12777) +
-                                        '/play?url=' + encodeURIComponent(abs) +
-                                        '&title=' + encodeURIComponent(t.title || '');
-                                    fetch(bridge, { cache: 'no-store' })
-                                        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); })
-                                        .catch(scheme);
-                                };
+                                var toMpv = function () { toMpvUrl(abs, t.title); };
                                 var playHere = function () {
                                     Lampa.Player.play({ title: t.title, url: abs, fastcdn: true });
                                     Lampa.Player.playlist([{ title: t.title, url: abs }]);
