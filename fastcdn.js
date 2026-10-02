@@ -23,6 +23,11 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.12 changes:
+ *   - Progress bar for "Подготовить на сервере": a self-contained overlay shows
+ *     download progress (segments/bytes from the relay job) and switches to an
+ *     indeterminate "транскод" state during ffmpeg, then "готово".
+ *
  * 0.8.11 fixes:
  *   - The VERSION constant is bumped again. 0.8.8-0.8.10 only changed the header
  *     @version, so the self-update (which compares VERSION) never fired and a
@@ -86,12 +91,12 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.11
+ * @version 0.8.12
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.11';
+    var VERSION = '0.8.12';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -190,6 +195,48 @@
             return r.json();
         });
     }
+
+    /* ---- progress bar for server-side prepare ---- */
+    function progressEl() {
+        var el = $('#fastcdn-progress');
+        if (!el.length) {
+            if (!$('#fastcdn-progress-style').length) {
+                $('<style id="fastcdn-progress-style">' +
+                    '#fastcdn-progress{position:fixed;left:50%;bottom:7em;transform:translateX(-50%);' +
+                    'width:36em;max-width:82%;z-index:9999;background:rgba(0,0,0,.85);border-radius:.6em;' +
+                    'padding:1.1em 1.3em;color:#fff;font-size:.95em;box-shadow:0 .4em 1.2em rgba(0,0,0,.5)}' +
+                    '#fastcdn-progress .fp-label{margin-bottom:.6em}' +
+                    '#fastcdn-progress .fp-track{height:.6em;background:rgba(255,255,255,.18);border-radius:.3em;overflow:hidden}' +
+                    '#fastcdn-progress .fp-fill{height:100%;width:0;background:#4caf50;border-radius:.3em;transition:width .3s}' +
+                    '#fastcdn-progress.indet .fp-fill{animation:fp-pulse 1.2s ease-in-out infinite}' +
+                    '@keyframes fp-pulse{0%,100%{opacity:.25}50%{opacity:.75}}' +
+                    '</style>').appendTo('head');
+            }
+            el = $('<div id="fastcdn-progress"><div class="fp-label"></div>' +
+                '<div class="fp-track"><div class="fp-fill"></div></div></div>').appendTo('body');
+        }
+        return el;
+    }
+
+    function progressShow(phase, done, total) {
+        var el = progressEl();
+        var label = 'FastCDN: ' + (phase || 'подготовка на сервере');
+        var known = total > 0;
+        el.toggleClass('indet', !known);
+        if (known) label += ' — ' + Math.min(100, Math.round(done / total * 100)) + '%';
+        el.find('.fp-label').text(label);
+        el.find('.fp-fill').css('width', (known ? Math.min(100, done / total * 100) : 100) + '%');
+    }
+
+    function progressDone() {
+        var el = progressEl();
+        el.removeClass('indet');
+        el.find('.fp-label').text('FastCDN: готово');
+        el.find('.fp-fill').css('width', '100%');
+        setTimeout(function () { el.remove(); }, 1200);
+    }
+
+    function progressHide() { $('#fastcdn-progress').remove(); }
 
     function isVkUrl(url) {
         return /vkuser\.net|vk\.com|vkvideo|okcdn|mycdn\.me|vk-cdn/i.test(url || '');
@@ -561,7 +608,6 @@
             var q = qualities[choice.quality] || t.qualities[0] || 'Auto';
             var name = (t.title || 'video').replace(/[^A-Za-z0-9\u0400-\u04FF\-. ]+/g, '_').slice(0, 100);
             var profile = Lampa.Storage.get('fastcdn_prepare_profile', 'copy') + '';
-            Lampa.Noty.show('FastCDN: подготовка на сервере...');
             var start = function (url) {
                 if (isVkUrl(url)) {
                     Lampa.Noty.show('FastCDN: VK-поток нельзя скачать — смотрите через релей');
@@ -573,6 +619,7 @@
                     Lampa.Noty.show('FastCDN: ссылка-шаблон (%s) — подготовка невозможна');
                     return;
                 }
+                progressShow('подготовка', 0, 0);
                 var h = t.headers ? b64url(JSON.stringify(t.headers)) : '';
                 var path = base + '/dl?u=' + b64url(url) + '&h=' + h +
                     '&profile=' + encodeURIComponent(profile) + '&name=' + encodeURIComponent(name);
@@ -584,6 +631,7 @@
                         tries++;
                         relayFetch(base + '/dl/' + job.id).then(function (s) {
                             if (s && s.status === 'done' && s.file) {
+                                progressDone();
                                 Lampa.Noty.show('FastCDN: готово');
                                 var abs = /^https?:/i.test(s.file) ? s.file : (location.origin + s.file);
                                 var toMpv = function () {
@@ -624,15 +672,19 @@
                                     });
                                 }
                             } else if (s && s.status === 'error') {
+                                progressHide();
                                 log('prepare error', s.error);
                                 Lampa.Noty.show('FastCDN: ' + String(s.error || 'ошибка подготовки').slice(0, 90));
-                            } else if (tries < 600) {
-                                setTimeout(poll, 3000);
+                            } else {
+                                var phase = (s && s.status) || 'подготовка';
+                                if (phase === 'transcoding') progressShow('транскод', 0, 0);
+                                else progressShow(phase === 'queued' ? 'в очереди' : 'загрузка', (s && s.done) || 0, (s && s.total) || 0);
+                                if (tries < 600) setTimeout(poll, 3000);
                             }
                         }).catch(function () { if (tries < 600) setTimeout(poll, 3000); });
                     };
                     poll();
-                }).catch(function (e) { log('prepare start fail', e); Lampa.Noty.show('FastCDN: сервер недоступен'); });
+                }).catch(function (e) { log('prepare start fail', e); progressHide(); Lampa.Noty.show('FastCDN: сервер недоступен'); });
             };
             if (t.resolve) { t.resolve(q, start, function () { Lampa.Noty.show('FastCDN: поток не получен'); }); return; }
             if (t.url) { start(t.url); return; }
