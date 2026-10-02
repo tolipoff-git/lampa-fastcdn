@@ -23,6 +23,13 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.17 fixes:
+ *   - CDNVideoHub always plays HLS through the relay, for every quality. The
+ *     progressive MP4s are cross-origin (no CORS) and can reject the browser's
+ *     Referer, which surfaced as a player error at 1080p/720p/480p.
+ *   - Lampa.Player.play payloads carry fastcdn:true so the mpv_lampa overlay no
+ *     longer stacks its own "MPV / browser" prompt on top of FastCDN's flow.
+ *
  * 0.8.16 changes:
  *   - MPV handoff now calls the local bridge endpoint
  *     (http://127.0.0.1:12777/play) first, because Chromium refuses to launch
@@ -116,12 +123,12 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.16
+ * @version 0.8.17
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.16';
+    var VERSION = '0.8.17';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -302,10 +309,11 @@
                             getJSON(self.base + 'video/' + d.vkId, function (r) {
                                 var s = r && r.sources;
                                 if (!s) { e2('no sources'); return; }
-                                var order = q === '1080p' ? ['mpegFullHdUrl', 'mpegHighUrl', 'mpegMediumUrl', 'hlsUrl']
-                                    : q === '720p' ? ['mpegHighUrl', 'mpegMediumUrl', 'mpegFullHdUrl', 'hlsUrl']
-                                        : q === '480p' ? ['mpegMediumUrl', 'mpegHighUrl', 'hlsUrl']
-                                            : ['hlsUrl', 'mpegFullHdUrl', 'mpegHighUrl', 'mpegMediumUrl'];
+                                // Always prefer HLS: it plays through our relay (same
+                                // origin, CORS, ad-stripped), while the progressive MP4s
+                                // are cross-origin and can reject the browser's Referer.
+                                // Quality is handled by hls.js / the bridge bitrate cap.
+                                var order = ['hlsUrl', 'mpegFullHdUrl', 'mpegHighUrl', 'mpegMediumUrl'];
                                 for (var i = 0; i < order.length; i++) if (s[order[i]]) { cb(s[order[i]]); return; }
                                 e2('no url');
                             }, e2);
@@ -620,7 +628,7 @@
             var done = function (url) {
                 url = relayUrl(url, t.headers);
                 log('play url', url);
-                Lampa.Player.play({ title: t.title, url: url });
+                Lampa.Player.play({ title: t.title, url: url, fastcdn: true });
                 Lampa.Player.playlist([{ title: t.title, url: url }]);
             };
             if (t.resolve) { t.resolve(q, done, function () { Lampa.Noty.show('FastCDN: поток не получен'); }); return; }
@@ -690,7 +698,7 @@
                                         .catch(scheme);
                                 };
                                 var playHere = function () {
-                                    Lampa.Player.play({ title: t.title, url: abs });
+                                    Lampa.Player.play({ title: t.title, url: abs, fastcdn: true });
                                     Lampa.Player.playlist([{ title: t.title, url: abs }]);
                                 };
                                 if (Lampa.Storage.get('fastcdn_mpv', true) === false) {
