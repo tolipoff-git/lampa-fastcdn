@@ -23,6 +23,12 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.14 fixes:
+ *   - Percent-encode the prepared file name in the URL. Titles with spaces (or
+ *     Cyrillic) produced URLs with literal spaces, which the MPV bridge's curl
+ *     pre-flight rejects (code 000 → "Прокси не отвечает") even though mpv
+ *     itself could open them.
+ *
  * 0.8.13 changes:
  *   - The running version is appended to the browser tab title
  *     ("… · FastCDN v0.8.13"), kept in sync via a MutationObserver, so the
@@ -96,12 +102,12 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.13
+ * @version 0.8.14
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.13';
+    var VERSION = '0.8.14';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -638,7 +644,10 @@
                             if (s && s.status === 'done' && s.file) {
                                 progressDone();
                                 Lampa.Noty.show('FastCDN: готово');
-                                var abs = /^https?:/i.test(s.file) ? s.file : (location.origin + s.file);
+                                // Percent-encode the file name: the MPV bridge's curl rejects
+                                // literal spaces, and titles can also contain Cyrillic.
+                                var fileUrl = s.file.replace(/([^/]*)$/, function (m) { return encodeURIComponent(m); });
+                                var abs = /^https?:/i.test(fileUrl) ? fileUrl : (location.origin + fileUrl);
                                 var toMpv = function () {
                                     // `abs` can already carry its own query string (e.g. a relay
                                     // token), so blindly appending "?title=" produced an invalid
