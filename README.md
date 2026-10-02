@@ -26,7 +26,8 @@ To publish a release (repo owner):
 ```
 
 ## Sources
-- CDNVideoHub (VK CDN backend)
+- CDNVideoHub (VK CDN backend) — always plays HLS through the relay; its
+  progressive MP4s are cross-origin without CORS, so they are only a fallback.
 - Filmix (PRO+ supported)
 
 Sources that return no video are hidden; the CDN picker lists only sources that
@@ -47,10 +48,15 @@ If the Lampa page itself is served from the relay host (our server), it may set
 `window.FASTCDN_RELAY = location.origin + '/hls'` (e.g. in `lampainit.js`); the
 plugin then uses the relay by default with no per-device setup.
 
+## Track menu
+Pressing a track opens a menu:
+- **Смотреть в браузере** — play via the relay (HLS).
+- **Открыть в MPV (bridge)** — hand the stream to the desktop MPV bridge.
+- **Подготовить на сервере** — only for downloadable sources (below).
+
 ## Prepare (download whole episode on the server)
-Pressing a track when a relay is configured offers two actions: **watch** or
-**prepare on the server**. Prepare downloads the whole stream with
-N_m3u8DL-RE (parallel) and stores it under `/hls/media/`:
+**Prepare** downloads the whole stream on the server and stores it under
+`/hls/media/`; a progress bar shows download %, then transcoding:
 
 - `fastcdn_prepare_profile = 'copy'` (default) — remux to **MKV**, streams copied
   as-is (quality untouched, keeps all audio/subtitle tracks).
@@ -67,20 +73,28 @@ media playlists by default (`HLS_STRIP_CUE_ADS=1`) and can drop ad-host
 segments via the `HLS_BLOCK` regex.
 
 ## MPV bridge
-After a prepared file is ready the plugin **hands it straight to MPV** via the `mpv://`
-scheme handled by `~/.local/bin/mpv-bridge` (desktop handler) — the pipeline is
-"server finished -> MPV plays the server file". Settings:
+"Открыть в MPV" hands the stream to the desktop bridge
+(`~/.local/bin/mpv-bridge`). The plugin calls the bridge's local endpoint
+`http://127.0.0.1:12777/play` first — Chromium refuses to launch the `mpv://`
+scheme without user activation (and rewrites it into `http://mpv//…`) — and
+falls back to the `mpv://` scheme for machines without the endpoint.
 
-- `fastcdn_mpv = false` — play in the browser instead of MPV.
-- `fastcdn_mpv_auto = false` — show the "Open in MPV / Watch here" prompt instead of
-  auto-opening MPV.
+Settings:
+- `fastcdn_mpv = false` — hide the MPV option (browser only).
+- `fastcdn_mpv_auto = true` — after prepare, auto-hand to MPV instead of asking
+  (off by default; the programmatic launch is often blocked by the browser).
 
 ```
-Lampa.Storage.set('fastcdn_mpv_auto', false);
+Lampa.Storage.set('fastcdn_mpv_auto', true);
 ```
 
-After playback `mpv-bridge` deletes the prepared file from the server
-(`DELETE /hls/media/<file>`; the relay also GCs by TTL/size as a safety net).
+After playback the bridge deletes the prepared file (`DELETE /hls/media/<file>`,
+only on a full watch); the relay GCs by TTL/size as a safety net.
+
+## Server storage
+Prepared files live under `/hls/media/` on the relay and are removed when fully
+watched or by the relay's GC — TTL and total-size caps via `HLS_MEDIA_TTL_HOURS`
+and `HLS_MEDIA_MAX_MB` (this deployment: 30 min / 20 GB).
 
 Playerjs-style Filmix links carry a quality template (`.../1080p_[,,1080,720,480,].mp4`);
 the plugin expands it to a concrete quality for both playback and prepare (the raw
