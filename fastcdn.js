@@ -23,6 +23,14 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.15 fixes:
+ *   - After "Подготовить" the plugin no longer auto-launches MPV. Chromium only
+ *     starts an external protocol (mpv://) from a real user gesture; the
+ *     programmatic click was blocked or turned into a bogus http://mpv//…
+ *     navigation (ERR_NAME_NOT_RESOLVED). The Select ("Открыть в MPV" /
+ *     "Смотреть здесь") is shown by default; fastcdn_mpv_auto=true re-enables
+ *     the old auto behaviour for environments that allow it.
+ *
  * 0.8.14 fixes:
  *   - Percent-encode the prepared file name in the URL. Titles with spaces (or
  *     Cyrillic) produced URLs with literal spaces, which the MPV bridge's curl
@@ -102,12 +110,12 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.14
+ * @version 0.8.15
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.14';
+    var VERSION = '0.8.15';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -667,8 +675,11 @@
                                 };
                                 if (Lampa.Storage.get('fastcdn_mpv', true) === false) {
                                     playHere();
-                                } else if (Lampa.Storage.get('fastcdn_mpv_auto', true) !== false) {
-                                    // pipeline: server finished preparing -> hand straight to MPV
+                                } else if (Lampa.Storage.get('fastcdn_mpv_auto', false) === true) {
+                                    // Opt-in only. A programmatic mpv:// click carries no
+                                    // user gesture, which Chromium blocks — or turns into a
+                                    // bogus http://mpv//… navigation (ERR_NAME_NOT_RESOLVED).
+                                    // The Select below runs on a real click and is reliable.
                                     toMpv();
                                 } else {
                                     Lampa.Select.show({
