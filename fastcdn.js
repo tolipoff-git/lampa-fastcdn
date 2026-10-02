@@ -23,6 +23,11 @@
  * (profile=copy -> .mkv, quality untouched) or transcoded (profile=h264 -> .mp4)
  * by the server, then played from /hls/media/… (Lampa.Storage 'fastcdn_prepare_profile').
  *
+ * 0.8.13 changes:
+ *   - The running version is appended to the browser tab title
+ *     ("… · FastCDN v0.8.13"), kept in sync via a MutationObserver, so the
+ *     active build is visible at a glance.
+ *
  * 0.8.12 changes:
  *   - Progress bar for "Подготовить на сервере": a self-contained overlay shows
  *     download progress (segments/bytes from the relay job) and switches to an
@@ -91,12 +96,12 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.12
+ * @version 0.8.13
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.12';
+    var VERSION = '0.8.13';
     var LOG = '[FastCDN] ';
 
     function log() {
@@ -841,5 +846,22 @@
     }
 
     log('v' + VERSION + ' loaded; sources:', SOURCES.map(function (s) { return s.id; }).join(','));
+
+    // Show the running version in the browser tab title, so it is obvious at a
+    // glance which build is active (and whether an update has landed). Lampa
+    // rewrites the title on navigation, so a MutationObserver keeps the suffix.
+    function tagTitle() {
+        var suffix = ' · FastCDN v' + VERSION;
+        if (document.title.indexOf(suffix) !== -1) return;
+        document.title = document.title.replace(/ · FastCDN v[0-9.]+$/, '') + suffix;
+    }
+    tagTitle();
+    try {
+        var titleEl = document.querySelector('title');
+        if (titleEl && window.MutationObserver) {
+            new MutationObserver(tagTitle).observe(titleEl, { childList: true, characterData: true, subtree: true });
+        }
+    } catch (e) {}
+
     setTimeout(checkUpdate, 5000);
 })();
