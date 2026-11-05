@@ -41,6 +41,10 @@ assert.equal(h.preparedFileUrl('/hls/media/test.mkv'), 'http://relay.example:808
 assert.equal(h.preparedFileUrl('media/test.mkv'), 'http://relay.example:8080/hls/media/test.mkv');
 assert.equal(h.preparedFileUrl('/hls/media/тест видео.mkv'), 'http://relay.example:8080/hls/media/%D1%82%D0%B5%D1%81%D1%82%20%D0%B2%D0%B8%D0%B4%D0%B5%D0%BE.mkv');
 assert.throws(() => h.preparedFileUrl('javascript:alert(1)'));
+assert.throws(() => h.preparedFileUrl('https://evil.example/hls/media/movie.mkv'), /relay origin/);
+assert.throws(() => h.preparedFileUrl('//evil.example/hls/media/movie.mkv'), /relay origin/);
+assert.equal(h.preparedFileUrl('http://relay.example:8080/hls/media/movie.mkv'), 'http://relay.example:8080/hls/media/movie.mkv');
+assert.ok(!code.includes("log('play url', url)"), 'do not log signed stream URLs or relay tokens');
 assert.equal(h.compareVersion('0.8.18', '0.8.17'), 1);
 assert.equal(h.compareVersion('0.8.17', '0.8.18'), -1);
 assert.equal(h.compareVersion('0.8.18', '0.8.18'), 0);
