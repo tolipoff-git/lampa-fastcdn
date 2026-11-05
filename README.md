@@ -25,6 +25,14 @@ To publish a release (repo owner):
 ./release.sh "fix: ..."   # commit + push + tag from VERSION + purge jsDelivr
 ```
 
+## Source lookup cache
+Successful source listings are cached for 45 seconds (up to 12 entries). Stream
+URLs are still resolved when played. To disable or tune the cache:
+
+```js
+Lampa.Storage.set('fastcdn_cache_seconds', 0); // disabled; default 45, max 120
+```
+
 ## Sources
 - CDNVideoHub (VK CDN backend) — always plays HLS through the relay; its
   progressive MP4s are cross-origin without CORS, so they are only a fallback.
