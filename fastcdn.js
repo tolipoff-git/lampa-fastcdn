@@ -129,12 +129,12 @@
  *     already has a query string.
  *   - Movie-card button now carries the FastCDN logo (circled play mark).
  *
- * @version 0.8.19
+ * @version 0.8.20
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.19';
+    var VERSION = '0.8.20';
     var LOG = '[FastCDN] ';
 
     function log() {
