@@ -108,3 +108,28 @@ Playerjs-style Filmix links carry a quality template (`.../1080p_[,,1080,720,480
 the plugin expands it to a concrete quality for both playback and prepare (the raw
 template is not a real file and returns 400). Links that still cannot be downloaded
 server-side (VK CDN, unresolved `%s`) are not offered for prepare.
+
+## Security boundaries (deployment audit)
+
+This repository contains only the Lampa client plugin. The HLS relay and local
+MPV bridge are separate services; their authentication and filesystem behavior
+cannot be verified from this repository alone.
+
+- **Relay:** The optional token is sent in URL query parameters (including HLS
+  playlist requests). Keep the relay behind HTTPS and access controls; redact
+  query strings in proxy logs. Moving credentials to request headers requires a
+  coordinated server/client change, particularly for player playlist requests.
+- **Download API:** The relay must authenticate POST `/dl`, job polling,
+  `/media` access and deletion; validate destination names, remote URL targets,
+  redirect chains and response sizes; restrict outbound fetches to prevent SSRF.
+- **MPV bridge:** `127.0.0.1:12777/play` is invoked via GET and receives an
+  arbitrary stream URL. Bind only to loopback, reject untrusted browser origins,
+  and require explicit authorization or a short-lived nonce to prevent local
+  cross-origin invocation. This needs changes in the bridge service, not only
+  the plugin.
+- **Prepared media:** Verify same-origin media paths and authentication at the
+  relay. The client accepts media URLs returned by the relay; never treat that
+  response as an authorization decision.
+
+These are server-side checks and risk mitigations, **not** claims that the
+currently deployed relay or bridge is vulnerable or already hardened.
