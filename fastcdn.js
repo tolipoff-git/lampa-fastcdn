@@ -546,7 +546,7 @@
         var balanser = Lampa.Storage.get('fastcdn_balanser', '') + ''; // restore last choice; falls back to fastest if unavailable
         var choice = { voice: 0, season: 0, quality: 0 };
         var filter_state = {};
-        var destroyed = false, timers = [];
+        var destroyed = false, timers = [], searchEpoch = 0;
         function schedule(fn, delay) {
             if (destroyed) return;
             var id = setTimeout(function () {
@@ -606,21 +606,37 @@
 
         this.search = function () {
             var _this = this;
+            var epoch = ++searchEpoch;
             this.activity.loader(true);
-            var pending = SOURCES.length, results = {};
+            var pending = SOURCES.length, results = {}, shown = false;
+            var ids = idsOf(object.movie);
             SOURCES.forEach(function (src) {
                 var started = Date.now(), settled = false;
                 function finish(res) {
-                    if (settled || destroyed) return;
+                    if (settled || destroyed || epoch !== searchEpoch) return;
                     settled = true;
-                    if (res) {
-                        res.speed = typeof res.speed === 'number' ? res.speed : Date.now() - started;
-                        results[src.id] = res;
+                    var available = !!(res && res.tracks && res.tracks.length);
+                    if (available) {
+                        // Do not mutate a shared cached response with per-request timing.
+                        var entry = {};
+                        for (var key in res) {
+                            if (Object.prototype.hasOwnProperty.call(res, key)) entry[key] = res[key];
+                        }
+                        entry.speed = typeof entry.speed === 'number' ? entry.speed : Date.now() - started;
+                        results[src.id] = entry;
                     }
-                    if (--pending === 0) _this.ready(results);
+                    --pending;
+                    // Render the first working source immediately; refresh the
+                    // picker when another source arrives, without changing selection.
+                    if (available) {
+                        shown = true;
+                        _this.ready(results);
+                    } else if (!pending && !shown) {
+                        _this.empty('FastCDN: ничего не найдено');
+                    }
                 }
                 try {
-                    fetchSource(src, idsOf(object.movie), function (res) { finish(res || {}); }, function () { finish(null); });
+                    fetchSource(src, ids, function (res) { finish(res); }, function () { finish(null); });
                 } catch (e) {
                     log('source failed', src.id, e);
                     finish(null);
@@ -840,6 +856,7 @@
         this.render = function () { return files.render(); };
         this.destroy = function () {
             destroyed = true;
+            ++searchEpoch;
             timers.forEach(clearTimeout);
             timers = [];
             progressHide();
