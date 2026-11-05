@@ -629,8 +629,8 @@
                     // Render the first working source immediately; refresh the
                     // picker when another source arrives, without changing selection.
                     if (available) {
+                        _this.ready(results, shown);
                         shown = true;
-                        _this.ready(results);
                     } else if (!pending && !shown) {
                         _this.empty('FastCDN: ничего не найдено');
                     }
@@ -644,7 +644,7 @@
             });
         };
 
-        this.ready = function (results) {
+        this.ready = function (results, incremental) {
             data = results;
             order = SOURCES.map(function (s) { return s.id; })
                 .filter(function (id) { return data[id] && data[id].tracks && data[id].tracks.length; })
@@ -652,6 +652,16 @@
             if (!order.length) { this.empty('FastCDN: ничего не найдено'); return; }
             if (order.indexOf(balanser) === -1) balanser = order[0];
             log('sources available (fastest first):', order.map(function (id) { return id + ' ' + (data[id].speed || 0) + 'ms'; }).join(', '));
+            if (incremental) {
+                // A late source only updates the source picker. Rebuilding the
+                // track list here would interrupt focus or the playback menu.
+                filter.set('sort', order.map(function (id) {
+                    var ms = data[id].speed ? ' · ' + data[id].speed + ' мс' : '';
+                    return { title: byId[id].title + ms, source: id, selected: id === balanser };
+                }));
+                filter.chosen('sort', [byId[balanser].title]);
+                return;
+            }
             this.buildList(order);
         };
 
