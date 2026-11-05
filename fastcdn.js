@@ -488,6 +488,28 @@
     var byId = {};
     SOURCES.forEach(function (s) { byId[s.id] = s; });
 
+    // Cache successful source listings only; stream resolution stays live.
+    // The bounded TTL avoids stale catalog data and unbounded WebView memory.
+    var sourceCache = Object.create(null), cacheKeys = [];
+    function fetchSource(src, ids, ok, err) {
+        var ttl = Number(Lampa.Storage.get('fastcdn_cache_seconds', 45));
+        if (!(ttl > 0)) { src.fetch(ids, ok, err); return; }
+        ttl = Math.min(120, ttl) * 1000;
+        var key = src.id + ':' + JSON.stringify([ids.kp, ids.imdb, ids.title, ids.year]);
+        var cached = sourceCache[key];
+        if (cached && Date.now() - cached.at < ttl) { ok(cached.data); return; }
+        src.fetch(ids, function (res) {
+            if (res && res.tracks && res.tracks.length) {
+                var pos = cacheKeys.indexOf(key);
+                if (pos !== -1) cacheKeys.splice(pos, 1);
+                cacheKeys.push(key);
+                sourceCache[key] = { at: Date.now(), data: res };
+                while (cacheKeys.length > 12) delete sourceCache[cacheKeys.shift()];
+            }
+            ok(res);
+        }, err);
+    }
+
     /* ================================================================== *
      * UI template
      * ================================================================== */
@@ -592,13 +614,13 @@
                     if (settled || destroyed) return;
                     settled = true;
                     if (res) {
-                        res.speed = Date.now() - started;
+                        res.speed = typeof res.speed === 'number' ? res.speed : Date.now() - started;
                         results[src.id] = res;
                     }
                     if (--pending === 0) _this.ready(results);
                 }
                 try {
-                    src.fetch(idsOf(object.movie), function (res) { finish(res || {}); }, function () { finish(null); });
+                    fetchSource(src, idsOf(object.movie), function (res) { finish(res || {}); }, function () { finish(null); });
                 } catch (e) {
                     log('source failed', src.id, e);
                     finish(null);
