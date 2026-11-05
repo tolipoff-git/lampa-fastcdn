@@ -127,11 +127,11 @@ Lampa.Reguest = function () {
     calls.push(url);
     if (url.includes('/lite/collaps?')) {
       ok(example);
-    } else if (url.includes('/lite/videoseed?')) {
-      ok({ type: 'season', data: [{ id: 1, url: 'https://lampac.example/lite/videoseed?s=1' }] });
     } else if (url.includes('/lite/videoseed?s=1')) {
       ok({ type: 'episode', data: [{ s: 1, e: 2, name: 'Dub',
         url: 'https://video.example/episode.m3u8', method: 'play' }] });
+    } else if (url.includes('/lite/videoseed?')) {
+      ok({ type: 'season', data: [{ id: 1, url: 'https://lampac.example/lite/videoseed?s=1' }] });
     } else if (url.includes('/lite/fancdn?')) {
       ok({ type: 'season', data: [{ id: 1, url: 'https://external.example/unsafe' }] });
     } else err(new Error('unknown route'));
