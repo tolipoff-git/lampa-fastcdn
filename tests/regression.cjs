@@ -6,7 +6,7 @@ const path = require('node:path');
 
 const code = fs.readFileSync(path.join(__dirname, '..', 'fastcdn.js'), 'utf8');
 assert.ok(code.endsWith('})();\n'), 'unexpected plugin wrapper');
-const exposed = code.replace(/\}\)\(\);\s*$/, 'globalThis.__fastcdnTest = { selectTrackQuality, expandLink, hasQualityPlaceholder, preparedFileUrl, compareVersion, fetchSource, Filmix, Component, SOURCES };})();');
+const exposed = code.replace(/\}\)\(\);\s*$/, 'globalThis.__fastcdnTest = { selectTrackQuality, expandLink, hasQualityPlaceholder, preparedFileUrl, compareVersion, fetchSource, Filmix, Component, SOURCES, OPTIONAL_SOURCES, activeSources, lampacBase, lampacTracks };})();');
 const storage = { fastcdn_relay: 'http://relay.example:8080/hls' };
 let response = [];
 const Lampa = {
@@ -102,5 +102,55 @@ callbacks[4].err();
 callbacks[5].err();
 assert.equal(emptyCount, 1, 'empty state only after every source finishes');
 h.SOURCES.forEach((src, i) => { src.fetch = originalFetches[i]; });
+
+// Optional Lampac adapters must not affect the original two sources until
+// a gateway is explicitly configured.
+assert.equal(h.activeSources().length, 2);
+storage.fastcdn_lampac_url = 'https://lampac.example/';
+assert.equal(h.lampacBase(), 'https://lampac.example');
+assert.equal(h.activeSources().length, 5);
+assert.deepEqual(Array.from(h.OPTIONAL_SOURCES.map(s => s.id)), ['collaps', 'videoseed', 'fancdn']);
+const example = { type: 'movie', data: [{ translate: 'Test voice', method: 'play',
+  url: 'https://video.example/movie.m3u8', quality: { '720p': 'https://video.example/720.m3u8' } }] };
+const extracted = h.lampacTracks(example, 'https://lampac.example', null);
+assert.equal(extracted.length, 1);
+assert.equal(extracted[0].voice, 'Test voice');
+assert.deepEqual(Array.from(extracted[0].qualities), ['720p']);
+let resolved;
+extracted[0].resolve('720p', u => { resolved = u; });
+assert.equal(resolved, 'https://video.example/720.m3u8');
+assert.equal(h.lampacTracks({ type: 'movie', data: [{ url: 'javascript:alert(1)' }] }, 'https://lampac.example', null).length, 0);
+let calls = [];
+Lampa.Reguest = function () {
+  this.timeout = () => {};
+  this.native = (url, ok, err) => {
+    calls.push(url);
+    if (url.includes('/lite/collaps?')) {
+      ok(example);
+    } else if (url.includes('/lite/videoseed?')) {
+      ok({ type: 'season', data: [{ id: 1, url: 'https://lampac.example/lite/videoseed?s=1' }] });
+    } else if (url.includes('/lite/videoseed?s=1')) {
+      ok({ type: 'episode', data: [{ s: 1, e: 2, name: 'Dub',
+        url: 'https://video.example/episode.m3u8', method: 'play' }] });
+    } else if (url.includes('/lite/fancdn?')) {
+      ok({ type: 'season', data: [{ id: 1, url: 'https://external.example/unsafe' }] });
+    } else err(new Error('unknown route'));
+  };
+};
+let collage, series, rejectedForeign = false;
+const ids = { kp: 123, imdb: 'tt123', title: 'Test', original: 'Test', year: 2024 };
+h.OPTIONAL_SOURCES[0].fetch(ids, r => { collage = r; }, assert.fail);
+assert.equal(collage.tracks.length, 1);
+assert.equal(collage.isSerial, false);
+h.OPTIONAL_SOURCES[1].fetch(ids, r => { series = r; }, assert.fail);
+assert.equal(series.isSerial, true);
+assert.equal(series.tracks.length, 1);
+assert.equal(series.tracks[0].episode, 2);
+h.OPTIONAL_SOURCES[2].fetch(ids, () => assert.fail('foreign URL must be rejected'),
+  () => { rejectedForeign = true; });
+assert.equal(rejectedForeign, true);
+assert.ok(calls[0].includes('rjson=true'));
+storage.fastcdn_lampac_url = 'javascript:alert(1)';
+assert.equal(h.activeSources().length, 2, 'unsupported URL scheme must disable adapters');
 
 console.log('FastCDN regression checks passed');
