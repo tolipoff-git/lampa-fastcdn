@@ -6,7 +6,7 @@ const path = require('node:path');
 
 const code = fs.readFileSync(path.join(__dirname, '..', 'fastcdn.js'), 'utf8');
 assert.ok(code.endsWith('})();\n'), 'unexpected plugin wrapper');
-const exposed = code.replace(/\}\)\(\);\s*$/, 'globalThis.__fastcdnTest = { selectTrackQuality, expandLink, hasQualityPlaceholder, preparedFileUrl, compareVersion, Filmix };})();');
+const exposed = code.replace(/\}\)\(\);\s*$/, 'globalThis.__fastcdnTest = { selectTrackQuality, expandLink, hasQualityPlaceholder, preparedFileUrl, compareVersion, fetchSource, Filmix };})();');
 const storage = { fastcdn_relay: 'http://relay.example:8080/hls' };
 let response = [];
 const Lampa = {
@@ -45,4 +45,20 @@ response = [{ id: 1, title: 'Wrong movie', year: 2024 }];
 let rejected = false;
 h.Filmix.fetch({ title: 'Right movie', year: 2024 }, () => assert.fail('year alone must not match'), () => { rejected = true; });
 assert.equal(rejected, true);
+let requests = 0;
+const mockSource = {
+  id: 'cache-test',
+  fetch: (ids, ok) => {
+    requests++;
+    ok({ isSerial: false, tracks: [{ voice: 'test' }] });
+  }
+};
+let cachedA, cachedB;
+h.fetchSource(mockSource, { kp: '10', imdb: null, title: 'Test', year: 2024 }, r => { cachedA = r; }, assert.fail);
+h.fetchSource(mockSource, { kp: '10', imdb: null, title: 'Test', year: 2024 }, r => { cachedB = r; }, assert.fail);
+assert.equal(requests, 1, 'repeat source lookup should be cached');
+assert.equal(cachedA, cachedB);
+storage.fastcdn_cache_seconds = 0;
+h.fetchSource(mockSource, { kp: '10', imdb: null, title: 'Test', year: 2024 }, () => {}, assert.fail);
+assert.equal(requests, 2, 'cache must be disableable');
 console.log('FastCDN regression checks passed');
