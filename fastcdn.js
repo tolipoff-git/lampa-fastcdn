@@ -177,6 +177,10 @@
         return supported.indexOf(requested) !== -1 ? requested : (supported[0] || 'Auto');
     }
 
+    function hasQualityPlaceholder(url) {
+        return /%s|%d(?![0-9a-f])/i.test(url || '');
+    }
+
     function expandLink(url, quality) {
         if (!url) return url;
         var pick = parseInt(quality) || 0;
@@ -189,7 +193,7 @@
                 return url.replace(/\[[,\d]*\]/, String(chosen));
             }
         }
-        if (/%[sd]/.test(url) && pick) return url.replace(/%[sd]/g, String(pick));
+        if (hasQualityPlaceholder(url) && pick) return url.replace(/%s|%d(?![0-9a-f])/gi, String(pick));
         return url;
     }
 
@@ -522,6 +526,7 @@
         var filter_state = {};
         var destroyed = false, timers = [];
         function schedule(fn, delay) {
+            if (destroyed) return;
             var id = setTimeout(function () {
                 timers = timers.filter(function (x) { return x !== id; });
                 if (!destroyed) fn();
@@ -688,7 +693,7 @@
             var q = selectTrackQuality(t, qualities, choice.quality);
             Lampa.Noty.show('FastCDN: получение потока...');
             var done = function (url) {
-                if (destroyed || !url || /%[sd]/i.test(url)) {
+                if (destroyed || !url || hasQualityPlaceholder(url)) {
                     if (!destroyed) Lampa.Noty.show('FastCDN: некорректная ссылка потока');
                     return;
                 }
@@ -698,7 +703,7 @@
                 Lampa.Player.play({ title: t.title, url: url, fastcdn: true });
                 Lampa.Player.playlist([{ title: t.title, url: url }]);
             };
-            if (t.resolve) { t.resolve(q, done, function () { Lampa.Noty.show('FastCDN: поток не получен'); }); return; }
+            if (t.resolve) { t.resolve(q, done, function () { if (!destroyed) Lampa.Noty.show('FastCDN: поток не получен'); }); return; }
             if (t.url) { done(t.url); return; }
         };
 
@@ -709,11 +714,12 @@
             var name = (t.title || 'video').replace(/[^A-Za-z0-9\u0400-\u04FF\-. ]+/g, '_').slice(0, 100);
             var profile = Lampa.Storage.get('fastcdn_prepare_profile', 'copy') + '';
             var start = function (url) {
+                if (destroyed) return;
                 if (isVkUrl(url)) {
                     Lampa.Noty.show('FastCDN: VK-поток нельзя скачать — смотрите через релей');
                     return;
                 }
-                if (/%[sd]/i.test(url)) {
+                if (hasQualityPlaceholder(url)) {
                     // CDN segment template (e.g. s01e06_%s.mp4) — not a real file,
                     // the downloader would get 400 and leave nothing to play.
                     Lampa.Noty.show('FastCDN: ссылка-шаблон (%s) — подготовка невозможна');
@@ -739,8 +745,6 @@
                         relayFetch(base + '/dl/' + encodeURIComponent(job.id)).then(function (s) {
                             if (destroyed) return;
                             if (s && s.status === 'done' && s.file) {
-                                progressDone();
-                                Lampa.Noty.show('FastCDN: готово');
                                 // Percent-encode the file name: the MPV bridge's curl rejects
                                 // literal spaces, and titles can also contain Cyrillic.
                                 var abs;
@@ -750,6 +754,8 @@
                                     Lampa.Noty.show('FastCDN: неверный адрес готового файла');
                                     return;
                                 }
+                                progressDone();
+                                Lampa.Noty.show('FastCDN: готово');
                                 var toMpv = function () { toMpvUrl(abs, t.title); };
                                 var playHere = function () {
                                     Lampa.Player.play({ title: t.title, url: abs, fastcdn: true });
@@ -791,9 +797,9 @@
                         }).catch(function () { schedule(poll, 3000); });
                     };
                     poll();
-                }).catch(function (e) { log('prepare start fail', e); progressHide(); Lampa.Noty.show('FastCDN: сервер недоступен'); });
+                }).catch(function (e) { if (destroyed) return; log('prepare start fail', e); progressHide(); Lampa.Noty.show('FastCDN: сервер недоступен'); });
             };
-            if (t.resolve) { t.resolve(q, start, function () { Lampa.Noty.show('FastCDN: поток не получен'); }); return; }
+            if (t.resolve) { t.resolve(q, start, function () { if (!destroyed) Lampa.Noty.show('FastCDN: поток не получен'); }); return; }
             if (t.url) { start(t.url); return; }
         };
 
