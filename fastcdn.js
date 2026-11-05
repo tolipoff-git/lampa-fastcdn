@@ -242,6 +242,8 @@
         if (!base || !file || typeof file !== 'string') throw new Error('Invalid prepared URL');
         var url = new URL(file, base + '/');
         if (!/^https?:$/.test(url.protocol)) throw new Error('Invalid media protocol');
+        var relay = new URL(base + '/');
+        if (url.origin !== relay.origin) throw new Error('Prepared media must use relay origin');
         return url.href;
     }
 
@@ -746,7 +748,6 @@
                     return;
                 }
                 url = relayUrl(url, t.headers);
-                log('play url', url);
                 if (mode === 'mpv') { toMpvUrl(url, t.title); return; }
                 Lampa.Player.play({ title: t.title, url: url, fastcdn: true });
                 Lampa.Player.playlist([{ title: t.title, url: url }]);
