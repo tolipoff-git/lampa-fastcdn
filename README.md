@@ -25,6 +25,44 @@ To publish a release (repo owner):
 ./release.sh "fix: ..."   # commit + push + tag from VERSION + purge jsDelivr
 ```
 
+## Optional sources via Lampac gateway
+
+FastCDN can list **Collaps**, **VideoSeed**, and **FanCDN** when a separate Lampac server
+is configured. These are **not** anonymous/free direct CDN APIs: the server-side
+providers may require upstream tokens, cookies or Playwright and are subject to
+their providers' access requirements. No credentials or anti-bot bypass are
+bundled into FastCDN.
+
+Configure a Lampac instance you administer, with these provider modules enabled,
+then set its origin in Lampa:
+
+```js
+Lampa.Storage.set('fastcdn_lampac_url', 'https://your-lampac-host.example');
+```
+
+**Requirements:** Lampac `/lite/{collaps,videoseed,fancdn}?rjson=true` endpoints must
+be reachable from the Lampa WebView and return JSON with the standard `type` /
+`data` fields. If cross-origin, configure CORS on your own gateway. Use HTTPS
+unless you explicitly operate in a trusted local network. The server itself,
+its authentication, provider enablement and upstream connectivity are not
+installed or managed by this JavaScript plugin.
+
+When `fastcdn_lampac_url` is empty or invalid, only the original CDNVideoHub and
+Filmix sources are queried. Empty or failing optional providers are hidden; they
+do not prevent the original sources from loading. Season listings are fetched
+from the gateway with at most four concurrent requests. Only stream playback is
+exposed; server-side media preparation is not enabled for optional providers.
+
+Disable the optional providers without reinstalling:
+
+```js
+Lampa.Storage.set('fastcdn_lampac_url', '');
+```
+
+**Validation:** The regression tests cover JSON conversion, season/episode paths,
+source gating, and URL restrictions. Live source availability, upstream quality,
+and speed are environment-dependent and must be tested with your Lampac server.
+
 ## Source lookup cache
 Successful source listings are cached for 45 seconds (up to 12 entries). Stream
 URLs are still resolved when played. To disable or tune the cache:
