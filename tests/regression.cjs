@@ -6,7 +6,7 @@ const path = require('node:path');
 
 const code = fs.readFileSync(path.join(__dirname, '..', 'fastcdn.js'), 'utf8');
 assert.ok(code.endsWith('})();\n'), 'unexpected plugin wrapper');
-const exposed = code.replace(/\}\)\(\);\s*$/, 'globalThis.__fastcdnTest = { selectTrackQuality, expandLink, preparedFileUrl, compareVersion, Filmix };})();');
+const exposed = code.replace(/\}\)\(\);\s*$/, 'globalThis.__fastcdnTest = { selectTrackQuality, expandLink, hasQualityPlaceholder, preparedFileUrl, compareVersion, Filmix };})();');
 const storage = { fastcdn_relay: 'http://relay.example:8080/hls' };
 let response = [];
 const Lampa = {
@@ -28,6 +28,12 @@ assert.equal(h.selectTrackQuality({ qualities: ['Auto'] }, ['1080p', 'Auto'], 1)
 assert.equal(h.expandLink('https://cdn.example/s01_%s.mp4', 'Auto'), 'https://cdn.example/s01_%s.mp4');
 assert.equal(h.expandLink('https://cdn.example/s01_%s.mp4', '720p'), 'https://cdn.example/s01_720.mp4');
 assert.equal(h.expandLink('https://cdn.example/1080p_[,,1080,720,].mp4', '720p'), 'https://cdn.example/1080p_720.mp4');
+assert.equal(h.hasQualityPlaceholder('https://cdn.example/%D0%B8%D0%B2%D0%B0%D0%BD.m3u8'), false);
+assert.equal(h.hasQualityPlaceholder('https://cdn.example/%D1%82%D0%B5%D1%81%D1%82.m3u8'), false);
+assert.equal(h.hasQualityPlaceholder('https://cdn.example/episode_%s.mp4'), true);
+assert.equal(h.hasQualityPlaceholder('https://cdn.example/episode_%d.mp4'), true);
+assert.equal(h.expandLink('https://cdn.example/%D0%B2%D0%B8%D0%B4%D0%B5%D0%BE_720.mp4', '720p'), 'https://cdn.example/%D0%B2%D0%B8%D0%B4%D0%B5%D0%BE_720.mp4');
+assert.equal(h.expandLink('https://cdn.example/episode_%d.mp4', '480p'), 'https://cdn.example/episode_480.mp4');
 assert.equal(h.preparedFileUrl('/hls/media/test.mkv'), 'http://relay.example:8080/hls/media/test.mkv');
 assert.equal(h.preparedFileUrl('media/test.mkv'), 'http://relay.example:8080/hls/media/test.mkv');
 assert.equal(h.preparedFileUrl('/hls/media/тест видео.mkv'), 'http://relay.example:8080/hls/media/%D1%82%D0%B5%D1%81%D1%82%20%D0%B2%D0%B8%D0%B4%D0%B5%D0%BE.mkv');
