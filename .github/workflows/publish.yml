@@ -27,8 +27,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(sed -n "s/.*var VERSION = '\\([0-9][0-9.]*\\)'.*/\\1/p" fastcdn.js | head -1)"
-          [[ "$version" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]] || exit 1
+          version="$(sed -n "s/.*var VERSION = '\([0-9][0-9.]*\)'.*/\1/p" fastcdn.js | head -1)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
           grep -Fq "@version $version" fastcdn.js
           tag="v$version"
           if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
