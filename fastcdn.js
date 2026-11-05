@@ -486,9 +486,144 @@
         }
     };
 
+
+    // Optional providers are served by an independently configured Lampac API.
+    // They are NOT public, unauthenticated client-side CDNs: Collaps needs its
+    // configured upstream, VideoSeed needs a token/Playwright and FanCDN cookies.
+    // Keep the existing two providers untouched until the gateway is configured.
+    function lampacBase() {
+        var raw = (Lampa.Storage.get('fastcdn_lampac_url', '') || '').toString().trim();
+        if (!raw) return '';
+        try {
+            var u = new URL(raw);
+            if (!/^https?:$/.test(u.protocol) || u.username || u.password || u.search || u.hash)
+                return '';
+            return u.href.replace(/\/+$/, '');
+        } catch (e) { return ''; }
+    }
+
+    function lampacStream(url, base) {
+        if (typeof url !== 'string' || !url) return '';
+        try {
+            var u = new URL(url, base + '/');
+            return /^https?:$/.test(u.protocol) && !u.username && !u.password ? u.href : '';
+        } catch (e) { return ''; }
+    }
+
+    function lampacQuality(entry) {
+        var quality = entry && entry.quality;
+        var labels = quality && typeof quality === 'object' && !Array.isArray(quality)
+            ? Object.keys(quality).filter(function (q) { return /^\d{3,4}p?$/i.test(q) && typeof quality[q] === 'string'; })
+            : [];
+        if (labels.length) return labels.sort(function (a, b) { return parseInt(b) - parseInt(a); });
+        var max = entry && entry.maxquality;
+        var match = String(max || '').match(/(\d{3,4})p?/i);
+        return match ? [match[1] + 'p'] : ['Auto'];
+    }
+
+    function lampacTracks(payload, base, season) {
+        if (!payload || !Array.isArray(payload.data)) return [];
+        return payload.data.filter(function (entry) {
+            return entry && entry.method !== 'link' && lampacStream(entry.url || entry.stream, base);
+        }).map(function (entry) {
+            var url = lampacStream(entry.url || entry.stream, base);
+            var qualities = lampacQuality(entry);
+            var name = entry.translate || entry.voice_name || entry.name || 'Озвучка';
+            var s = entry.s != null ? Number(entry.s) : (season == null ? null : Number(season));
+            var e = entry.e != null ? Number(entry.e) : null;
+            return {
+                voice: name, season: s, episode: e,
+                title: s != null && e != null ? 'S' + s + 'E' + e + ' · ' + name : (entry.title || name),
+                qualities: qualities, headers: entry.headers || null,
+                noPrepare: true,
+                resolve: function (q, ok) {
+                    var alternate = entry.quality && entry.quality[q];
+                    ok(alternate ? lampacStream(alternate, base) || url : url);
+                }
+            };
+        });
+    }
+
+    function makeLampacSource(id, title) {
+        return {
+            id: id, title: title,
+            fetch: function (ids, ok, err) {
+                var base = lampacBase();
+                if (!base) { err('lampac not configured'); return; }
+                var query = '?rjson=true' +
+                    '&kinopoisk_id=' + encodeURIComponent(ids.kp || 0) +
+                    '&imdb_id=' + encodeURIComponent(ids.imdb || '') +
+                    '&title=' + encodeURIComponent(ids.title || '') +
+                    '&original_title=' + encodeURIComponent(ids.original || '') +
+                    '&year=' + encodeURIComponent(ids.year || 0);
+                var route = base + '/lite/' + id + query;
+                getJSON(route, function (root) {
+                    if (typeof root === 'string') {
+                        try { root = JSON.parse(root); } catch (e) { err('invalid JSON'); return; }
+                    }
+                    if (!root || !Array.isArray(root.data)) { err('invalid provider response'); return; }
+                    if (root.type !== 'season') {
+                        var movie = lampacTracks(root, base, null);
+                        if (!movie.length) { err('empty'); return; }
+                        ok({ isSerial: false, tracks: movie });
+                        return;
+                    }
+                    var seasons = root.data;
+                    if (!seasons.length || seasons.length > 24) { err('invalid season count'); return; }
+                    var tracks = [], next = 0, active = 0, completed = 0, settled = false;
+                    function pump() {
+                        if (settled) return;
+                        while (active < 4 && next < seasons.length) {
+                            var season = seasons[next++];
+                            var seasonUrl = lampacStream(season.url, base);
+                            // Reject cross-origin season links: never send configured
+                            // provider data to an arbitrary URL from a response.
+                            if (!seasonUrl || new URL(seasonUrl).origin !== new URL(base).origin) {
+                                err('invalid season URL'); settled = true; return;
+                            }
+                            active++;
+                            (function (row, url) {
+                                getJSON(url + (url.indexOf('?') === -1 ? '?' : '&') + 'rjson=true', function (result) {
+                                    if (settled) return;
+                                    if (typeof result === 'string') {
+                                        try { result = JSON.parse(result); } catch (e) { result = null; }
+                                    }
+                                    tracks = tracks.concat(lampacTracks(result, base, row.id));
+                                    active--; completed++;
+                                    if (completed === seasons.length) {
+                                        settled = true;
+                                        if (tracks.length) ok({ isSerial: true, tracks: tracks });
+                                        else err('empty episodes');
+                                    } else pump();
+                                }, function () {
+                                    if (settled) return;
+                                    active--; completed++;
+                                    if (completed === seasons.length) {
+                                        settled = true;
+                                        if (tracks.length) ok({ isSerial: true, tracks: tracks });
+                                        else err('season requests failed');
+                                    } else pump();
+                                });
+                            })(season, seasonUrl);
+                        }
+                    }
+                    pump();
+                }, err);
+            }
+        };
+    }
+
     var SOURCES = [CDNVideoHub, Filmix];
+    var OPTIONAL_SOURCES = [
+        makeLampacSource('collaps', 'Collaps'),
+        makeLampacSource('videoseed', 'VideoSeed'),
+        makeLampacSource('fancdn', 'FanCDN')
+    ];
+    function activeSources() {
+        return lampacBase() ? SOURCES.concat(OPTIONAL_SOURCES) : SOURCES;
+    }
     var byId = {};
-    SOURCES.forEach(function (s) { byId[s.id] = s; });
+    SOURCES.concat(OPTIONAL_SOURCES).forEach(function (s) { byId[s.id] = s; });
 
     // Cache successful source listings only; stream resolution stays live.
     // The bounded TTL avoids stale catalog data and unbounded WebView memory.
@@ -497,7 +632,7 @@
         var ttl = Number(Lampa.Storage.get('fastcdn_cache_seconds', 45));
         if (!(ttl > 0)) { src.fetch(ids, ok, err); return; }
         ttl = Math.min(120, ttl) * 1000;
-        var key = src.id + ':' + JSON.stringify([ids.kp, ids.imdb, ids.title, ids.year]);
+        var key = src.id + ':' + (lampacBase() || '') + ':' + JSON.stringify([ids.kp, ids.imdb, ids.title, ids.year]);
         var cached = sourceCache[key];
         if (cached && Date.now() - cached.at < ttl) { ok(cached.data); return; }
         src.fetch(ids, function (res) {
@@ -610,9 +745,9 @@
             var _this = this;
             var epoch = ++searchEpoch;
             this.activity.loader(true);
-            var pending = SOURCES.length, results = {}, shown = false;
+            var sources = activeSources(), pending = sources.length, results = {}, shown = false;
             var ids = idsOf(object.movie);
-            SOURCES.forEach(function (src) {
+            sources.forEach(function (src) {
                 var started = Date.now(), settled = false;
                 function finish(res) {
                     if (settled || destroyed || epoch !== searchEpoch) return;
@@ -648,7 +783,7 @@
 
         this.ready = function (results, incremental) {
             data = results;
-            order = SOURCES.map(function (s) { return s.id; })
+            order = activeSources().map(function (s) { return s.id; })
                 .filter(function (id) { return data[id] && data[id].tracks && data[id].tracks.length; })
                 .sort(function (a, b) { return (data[a].speed || 0) - (data[b].speed || 0); });
             if (!order.length) { this.empty('FastCDN: ничего не найдено'); return; }
