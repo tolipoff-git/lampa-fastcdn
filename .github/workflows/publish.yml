@@ -1,0 +1,42 @@
+name: Publish FastCDN tag
+on:
+  push:
+    branches: [master]
+permissions:
+  contents: read
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate plugin before publishing
+        run: |
+          node --check fastcdn.js
+          node tests/regression.cjs
+          bash -n release.sh
+      - name: Publish version tag and invalidate CDN
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n "s/.*var VERSION = '\([0-9][0-9.]*\)'.*/\1/p" fastcdn.js | head -1)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          grep -Fq "@version $version" fastcdn.js
+          tag="v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "$tag already exists; nothing to publish"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "FastCDN $tag"
+          git push origin "refs/tags/$tag"
+          curl -fsS --retry 3 --max-time 20 "https://purge.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@latest/fastcdn.js"
