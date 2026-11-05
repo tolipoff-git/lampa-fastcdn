@@ -171,6 +171,16 @@
         return out;
     }
 
+    function selectTrackQuality(track, qualities, index) {
+        var requested = qualities[index];
+        var supported = track.qualities || [];
+        return supported.indexOf(requested) !== -1 ? requested : (supported[0] || 'Auto');
+    }
+
+    function hasQualityPlaceholder(url) {
+        return /%s|%d(?![0-9a-f])/i.test(url || '');
+    }
+
     function expandLink(url, quality) {
         if (!url) return url;
         var pick = parseInt(quality) || 0;
@@ -183,7 +193,7 @@
                 return url.replace(/\[[,\d]*\]/, String(chosen));
             }
         }
-        if (/%[sd]/.test(url)) return url.replace(/%[sd]/g, pick ? String(pick) : '1');
+        if (hasQualityPlaceholder(url) && pick) return url.replace(/%s|%d(?![0-9a-f])/gi, String(pick));
         return url;
     }
 
@@ -225,6 +235,14 @@
         var out = base + '/playlist.m3u8?u=' + b64url(url) + '&h=' + h;
         if (relayToken()) out += '&token=' + encodeURIComponent(relayToken());
         return out;
+    }
+
+    function preparedFileUrl(file) {
+        var base = relayBase();
+        if (!base || !file || typeof file !== 'string') throw new Error('Invalid prepared URL');
+        var url = new URL(file, base + '/');
+        if (!/^https?:$/.test(url.protocol)) throw new Error('Invalid media protocol');
+        return url.href;
     }
 
     function relayFetch(path, opts) {
@@ -443,9 +461,10 @@
                 var n = norm(ids.title), year = ids.year;
                 var scored = cards.map(function (c) {
                     var s = 0;
-                    if (norm(c.title) === n || norm(c.original_title) === n) s += 5;
-                    else if (norm(c.title).indexOf(n) !== -1 || norm(c.original_title).indexOf(n) !== -1) s += 2;
-                    if (year && c.year == year) s += 3;
+                    var ct = norm(c.title), co = norm(c.original_title);
+                    if (ct === n || co === n) s = 5;
+                    else if (n.length >= 3 && (ct.indexOf(n) !== -1 || co.indexOf(n) !== -1)) s = 2;
+                    if (s > 0 && year && c.year == year) s += 3;
                     return { c: c, s: s };
                 }).sort(function (a, b) { return b.s - a.s; })[0];
                 // A score of 0 means nothing actually matched title or year —
@@ -468,6 +487,28 @@
     var SOURCES = [CDNVideoHub, Filmix];
     var byId = {};
     SOURCES.forEach(function (s) { byId[s.id] = s; });
+
+    // Cache successful source listings only; stream resolution stays live.
+    // The bounded TTL avoids stale catalog data and unbounded WebView memory.
+    var sourceCache = Object.create(null), cacheKeys = [];
+    function fetchSource(src, ids, ok, err) {
+        var ttl = Number(Lampa.Storage.get('fastcdn_cache_seconds', 45));
+        if (!(ttl > 0)) { src.fetch(ids, ok, err); return; }
+        ttl = Math.min(120, ttl) * 1000;
+        var key = src.id + ':' + JSON.stringify([ids.kp, ids.imdb, ids.title, ids.year]);
+        var cached = sourceCache[key];
+        if (cached && Date.now() - cached.at < ttl) { ok(cached.data); return; }
+        src.fetch(ids, function (res) {
+            if (res && res.tracks && res.tracks.length) {
+                var pos = cacheKeys.indexOf(key);
+                if (pos !== -1) cacheKeys.splice(pos, 1);
+                cacheKeys.push(key);
+                sourceCache[key] = { at: Date.now(), data: res };
+                while (cacheKeys.length > 12) delete sourceCache[cacheKeys.shift()];
+            }
+            ok(res);
+        }, err);
+    }
 
     /* ================================================================== *
      * UI template
@@ -505,6 +546,15 @@
         var balanser = Lampa.Storage.get('fastcdn_balanser', '') + ''; // restore last choice; falls back to fastest if unavailable
         var choice = { voice: 0, season: 0, quality: 0 };
         var filter_state = {};
+        var destroyed = false, timers = [];
+        function schedule(fn, delay) {
+            if (destroyed) return;
+            var id = setTimeout(function () {
+                timers = timers.filter(function (x) { return x !== id; });
+                if (!destroyed) fn();
+            }, delay);
+            timers.push(id);
+        }
 
         this.activity = null;
         this.create = function () {
@@ -528,7 +578,7 @@
                     // the balanser only needs to rebuild the list from cached
                     // `data`, not hit the network again for every source.
                     _this.buildList(order);
-                    setTimeout(Lampa.Select.close, 10);
+                    schedule(Lampa.Select.close, 10);
                 } else if (type === 'filter') {
                     if (a.reset) { choice.voice = 0; choice.season = 0; choice.quality = 0; }
                     else if (a.stype === 'voice') choice.voice = b.index;
@@ -559,15 +609,22 @@
             this.activity.loader(true);
             var pending = SOURCES.length, results = {};
             SOURCES.forEach(function (src) {
-                var started = Date.now();
-                src.fetch(idsOf(object.movie), function (res) {
-                    res = res || {};
-                    res.speed = Date.now() - started;
-                    results[src.id] = res;
+                var started = Date.now(), settled = false;
+                function finish(res) {
+                    if (settled || destroyed) return;
+                    settled = true;
+                    if (res) {
+                        res.speed = typeof res.speed === 'number' ? res.speed : Date.now() - started;
+                        results[src.id] = res;
+                    }
                     if (--pending === 0) _this.ready(results);
-                }, function () {
-                    if (--pending === 0) _this.ready(results);
-                });
+                }
+                try {
+                    fetchSource(src, idsOf(object.movie), function (res) { finish(res || {}); }, function () { finish(null); });
+                } catch (e) {
+                    log('source failed', src.id, e);
+                    finish(null);
+                }
             });
         };
 
@@ -655,31 +712,36 @@
         this.append = function (item) { scroll.append(item); };
 
         this.play = function (t, qualities, mode) {
-            var q = qualities[choice.quality] || t.qualities[0] || 'Auto';
+            var q = selectTrackQuality(t, qualities, choice.quality);
             Lampa.Noty.show('FastCDN: получение потока...');
             var done = function (url) {
+                if (destroyed || !url || hasQualityPlaceholder(url)) {
+                    if (!destroyed) Lampa.Noty.show('FastCDN: некорректная ссылка потока');
+                    return;
+                }
                 url = relayUrl(url, t.headers);
                 log('play url', url);
                 if (mode === 'mpv') { toMpvUrl(url, t.title); return; }
                 Lampa.Player.play({ title: t.title, url: url, fastcdn: true });
                 Lampa.Player.playlist([{ title: t.title, url: url }]);
             };
-            if (t.resolve) { t.resolve(q, done, function () { Lampa.Noty.show('FastCDN: поток не получен'); }); return; }
+            if (t.resolve) { t.resolve(q, done, function () { if (!destroyed) Lampa.Noty.show('FastCDN: поток не получен'); }); return; }
             if (t.url) { done(t.url); return; }
         };
 
         this.prepare = function (t, qualities) {
             var base = relayBase();
             if (!base || t.noPrepare) { this.play(t, qualities); return; }
-            var q = qualities[choice.quality] || t.qualities[0] || 'Auto';
+            var q = selectTrackQuality(t, qualities, choice.quality);
             var name = (t.title || 'video').replace(/[^A-Za-z0-9\u0400-\u04FF\-. ]+/g, '_').slice(0, 100);
             var profile = Lampa.Storage.get('fastcdn_prepare_profile', 'copy') + '';
             var start = function (url) {
+                if (destroyed) return;
                 if (isVkUrl(url)) {
                     Lampa.Noty.show('FastCDN: VK-поток нельзя скачать — смотрите через релей');
                     return;
                 }
-                if (/%[sd]/i.test(url)) {
+                if (hasQualityPlaceholder(url)) {
                     // CDN segment template (e.g. s01e06_%s.mp4) — not a real file,
                     // the downloader would get 400 and leave nothing to play.
                     Lampa.Noty.show('FastCDN: ссылка-шаблон (%s) — подготовка невозможна');
@@ -691,18 +753,31 @@
                     '&profile=' + encodeURIComponent(profile) + '&name=' + encodeURIComponent(name);
                 if (relayToken()) path += '&token=' + encodeURIComponent(relayToken());
                 relayFetch(path, { method: 'POST' }).then(function (job) {
-                    if (!job || !job.id) { Lampa.Noty.show('FastCDN: не удалось запустить'); return; }
+                    if (destroyed) return;
+                    if (!job || !job.id) { progressHide(); Lampa.Noty.show('FastCDN: не удалось запустить'); return; }
                     var tries = 0;
                     var poll = function () {
+                        if (destroyed) return;
+                        if (tries >= 600) {
+                            progressHide();
+                            Lampa.Noty.show('FastCDN: превышено время ожидания');
+                            return;
+                        }
                         tries++;
-                        relayFetch(base + '/dl/' + job.id).then(function (s) {
+                        relayFetch(base + '/dl/' + encodeURIComponent(job.id)).then(function (s) {
+                            if (destroyed) return;
                             if (s && s.status === 'done' && s.file) {
-                                progressDone();
-                                Lampa.Noty.show('FastCDN: готово');
                                 // Percent-encode the file name: the MPV bridge's curl rejects
                                 // literal spaces, and titles can also contain Cyrillic.
-                                var fileUrl = s.file.replace(/([^/]*)$/, function (m) { return encodeURIComponent(m); });
-                                var abs = /^https?:/i.test(fileUrl) ? fileUrl : (location.origin + fileUrl);
+                                var abs;
+                                try { abs = preparedFileUrl(s.file); }
+                                catch (e) {
+                                    progressHide();
+                                    Lampa.Noty.show('FastCDN: неверный адрес готового файла');
+                                    return;
+                                }
+                                progressDone();
+                                Lampa.Noty.show('FastCDN: готово');
                                 var toMpv = function () { toMpvUrl(abs, t.title); };
                                 var playHere = function () {
                                     Lampa.Player.play({ title: t.title, url: abs, fastcdn: true });
@@ -739,14 +814,14 @@
                                 var phase = (s && s.status) || 'подготовка';
                                 if (phase === 'transcoding') progressShow('транскод', 0, 0);
                                 else progressShow(phase === 'queued' ? 'в очереди' : 'загрузка', (s && s.done) || 0, (s && s.total) || 0);
-                                if (tries < 600) setTimeout(poll, 3000);
+                                schedule(poll, 3000);
                             }
-                        }).catch(function () { if (tries < 600) setTimeout(poll, 3000); });
+                        }).catch(function () { schedule(poll, 3000); });
                     };
                     poll();
-                }).catch(function (e) { log('prepare start fail', e); progressHide(); Lampa.Noty.show('FastCDN: сервер недоступен'); });
+                }).catch(function (e) { if (destroyed) return; log('prepare start fail', e); progressHide(); Lampa.Noty.show('FastCDN: сервер недоступен'); });
             };
-            if (t.resolve) { t.resolve(q, start, function () { Lampa.Noty.show('FastCDN: поток не получен'); }); return; }
+            if (t.resolve) { t.resolve(q, start, function () { if (!destroyed) Lampa.Noty.show('FastCDN: поток не получен'); }); return; }
             if (t.url) { start(t.url); return; }
         };
 
@@ -763,7 +838,14 @@
         this.pause = function () {};
         this.stop = function () {};
         this.render = function () { return files.render(); };
-        this.destroy = function () { scroll.destroy(); files.destroy(); };
+        this.destroy = function () {
+            destroyed = true;
+            timers.forEach(clearTimeout);
+            timers = [];
+            progressHide();
+            scroll.destroy();
+            files.destroy();
+        };
         this.back = function () { Lampa.Activity.backward(); };
 
         this.start = function () {
@@ -873,13 +955,21 @@
     // forever — no reinstall and no per-version URL changes for the user.
     var UPDATE_URL = 'https://cdn.jsdelivr.net/gh/tolipoff-git/lampa-fastcdn@latest/fastcdn.js';
 
+    function compareVersion(a, b) {
+        var x = a.split('.').map(Number), y = b.split('.').map(Number);
+        for (var i = 0; i < 3; i++) {
+            if (x[i] !== y[i]) return x[i] > y[i] ? 1 : -1;
+        }
+        return 0;
+    }
+
     function checkUpdate() {
         if (typeof fetch !== 'function') return;
         fetch(UPDATE_URL + '?ts=' + Date.now(), { cache: 'no-store' }).then(function (r) {
             return r.ok ? r.text() : '';
         }).then(function (code) {
             var m = (code || '').match(/VERSION\s*=\s*'([0-9]+\.[0-9]+\.[0-9]+)'/);
-            if (!m || m[1] === VERSION) return;
+            if (!m || compareVersion(m[1], VERSION) <= 0) return;
 
             var seen = false;
             try { seen = !!sessionStorage.getItem('fastcdn_upd_' + m[1]); } catch (e) {}
